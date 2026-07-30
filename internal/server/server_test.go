@@ -783,16 +783,18 @@ func TestAPI_CORSHeaders(t *testing.T) {
 	s := newTestServer(t)
 	h := s.Handler()
 
-	// Extension-origin preflight under /api/ -> 204 with that origin reflected.
-	const extOrigin = "safari-web-extension://D1AB0C2E-4F2A-4B7E-9C01-FAKEGUID0001"
-	r, w := httptest.NewRequest(http.MethodOptions, "/api/download", nil), httptest.NewRecorder()
-	r.Header.Set("Origin", extOrigin)
+	// Same-origin preflight under /api/ -> 204 with that origin reflected.
+	// The server is 127.0.0.1:8080; a same-origin browser fetch carries that
+	// Origin (host:port equal to the request Host) and must be allowed + reflected.
+	const sameOrigin = "http://127.0.0.1:8080"
+	r, w := httptest.NewRequest(http.MethodOptions, "http://127.0.0.1:8080/api/download", nil), httptest.NewRecorder()
+	r.Header.Set("Origin", sameOrigin)
 	h.ServeHTTP(w, r)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d", w.Code)
 	}
-	if got := w.Header().Get("Access-Control-Allow-Origin"); got != extOrigin {
-		t.Errorf("expected ACAO to reflect the extension origin, got %q", got)
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != sameOrigin {
+		t.Errorf("expected ACAO to reflect the same origin, got %q", got)
 	}
 	if got := w.Header().Get("Vary"); got != "Origin" {
 		t.Errorf("expected Vary: Origin, got %q", got)
@@ -843,7 +845,7 @@ func TestAPI_CORSHeaders(t *testing.T) {
 	// Path normalization: /api/../settings cleans to /settings, so CORS must
 	// NOT be applied (the mux would redirect this to the HTML /settings route).
 	r5, w5 := httptest.NewRequest(http.MethodOptions, "/api/../settings", nil), httptest.NewRecorder()
-	r5.Header.Set("Origin", extOrigin)
+	r5.Header.Set("Origin", sameOrigin)
 	h.ServeHTTP(w5, r5)
 	if got := w5.Header().Get("Access-Control-Allow-Origin"); got != "" {
 		t.Errorf("path-traversal /api/../settings must not get CORS headers, got ACAO=%q", got)

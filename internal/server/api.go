@@ -14,36 +14,19 @@ import (
 // -ldflags; it defaults to "dev" for local/test runs.
 var Version = "dev"
 
-// extensionOriginSchemes are the WebExtension origin schemes the Safari (and
-// Chrome/Firefox) extension uses. These origins rotate per install/launch
-// (safari-web-extension://<GUID>), so they cannot be allowlisted by exact
-// string — but the scheme is fixed, which is enough to distinguish a legitimate
-// extension request from a drive-by web page.
-var extensionOriginSchemes = []string{
-	"safari-web-extension://",
-	"chrome-extension://",
-	"moz-extension://",
-}
-
 // apiOriginAllowed reports whether a request's Origin may use the /api/*
 // surface. The server is 127.0.0.1-only, but the user's browser can still reach
 // 127.0.0.1 while viewing an attacker-controlled page, so a blanket
 // Access-Control-Allow-Origin: * would let that page enqueue downloads to the
 // user's disk. Instead we allow only:
 //   - no Origin at all (curl / same-machine tools — not subject to CORS), and
-//   - browser-extension origins (the actual extension client), and
 //   - same-origin requests (the Origin host:port equals the request's Host).
 //
-// A drive-by http(s) page fails all three and gets no CORS headers, so the
+// A drive-by http(s) page fails both and gets no CORS headers, so the
 // browser blocks the cross-origin fetch/read.
 func apiOriginAllowed(origin, host string) bool {
 	if origin == "" {
 		return true
-	}
-	for _, scheme := range extensionOriginSchemes {
-		if strings.HasPrefix(origin, scheme) {
-			return true
-		}
 	}
 	u, err := url.Parse(origin)
 	if err != nil {
@@ -105,7 +88,7 @@ func (s *Server) apiMiddleware(h http.Handler) http.Handler {
 	})
 }
 
-// handleAPIHealth reports server liveness and version for the extension.
+// handleAPIHealth reports server liveness and version for /api/* clients.
 func (s *Server) handleAPIHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,
@@ -114,7 +97,7 @@ func (s *Server) handleAPIHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // downloadRequest is the JSON body for POST /api/download. Field names are
-// lenient (the JSON tags match the extension's payload); the values map onto
+// lenient (the JSON tags match the /api/* client payload); the values map onto
 // the shared DownloadOpts via handleAPIDownload.
 type downloadRequest struct {
 	Kind     string   `json:"kind"`
@@ -184,8 +167,8 @@ func (s *Server) handleAPIDownload(w http.ResponseWriter, r *http.Request) {
 	job, err := s.enqueue(kind, id, opts)
 	if err != nil {
 		// errNotConfigured carries a safe, user-actionable message (it never
-		// mentions the token value), so surface it verbatim so the extension
-		// can prompt the user to save their token. All other enqueue errors
+		// mentions the token value), so surface it verbatim so the client can
+		// prompt the user to save their token. All other enqueue errors
 		// (CMS discovery, network, ffmpeg wiring) can leak internal endpoint /
 		// transport details via err.Error(); log those server-side and return a
 		// fixed generic string to the client. The token is never echoed.
@@ -198,8 +181,8 @@ func (s *Server) handleAPIDownload(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": msg})
 		return
 	}
-	// Remember the user's choices so the modal/extension pre-fills them next
-	// time (shared helper with the web form).
+	// Remember the user's choices so the modal pre-fills them next time
+	// (shared helper with the web form).
 	s.persistLastOpts(opts)
 
 	writeJSON(w, http.StatusCreated, map[string]any{"jobId": job.ID})
