@@ -33,6 +33,8 @@ type crunchyAPI interface {
 	GetSeasonEpisodes(contentId, audioLocale, subLocale string) ([]media.SeasonEpisode, error)
 	GetEpisodeInfo(id string) (media.EpisodeInfo, error)
 	GetSeries(id string) (media.Series, error)
+	BrowsePopular(n, start int) ([]media.BrowsePanel, error)
+	SearchSeries(q string, n int) ([]media.SearchHit, error)
 }
 
 // DownloadOpts carries the user's choices from the download-options modal into a

@@ -42,45 +42,76 @@ func (s *Server) handleSettingsPost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
-	render(w, r, web.BrowsePage(nil, "", ""))
+	if !s.Configured() {
+		render(w, r, web.BrowsePage(nil, "Save your etp_rt token in Settings first."))
+		return
+	}
+	s.mu.RLock()
+	api := s.api
+	s.mu.RUnlock()
+	var popular []media.BrowsePanel
+	if api != nil {
+		popular, _ = api.BrowsePopular(36, 0) // best-effort; degrade to empty grid
+	}
+	render(w, r, web.BrowsePage(popular, ""))
 }
 
+// handleBrowsePost serves the unified Browse search box. The single `q` field
+// is either a series URL (drills straight into the seasons list, reusing the
+// existing series flow) or a title (searches the discover/search endpoint); an
+// empty query re-shows the popular grid. Results swap into #seasons.
 func (s *Server) handleBrowsePost(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		render(w, r, web.SeasonsList(nil, "", err.Error()))
+		render(w, r, web.PopularGrid(nil, "Could not parse the form."))
 		return
 	}
-	url := strings.TrimSpace(r.FormValue("url"))
+	q := strings.TrimSpace(r.FormValue("q"))
 
 	if !s.Configured() {
-		render(w, r, web.SeasonsList(nil, "", "Save your etp_rt token in Settings first."))
-		return
-	}
-
-	contentType, contentId, err := crunchy.ParseContentURL(url)
-	if err != nil {
-		render(w, r, web.SeasonsList(nil, "", err.Error()))
-		return
-	}
-	// /browse is for series pages; an episode /watch/ link belongs to the
-	// download flow, not the seasons list.
-	if contentType == "watch" {
-		render(w, r, web.SeasonsList(nil, "", "That's an episode link. Browse from a /series/ page to pick episodes."))
+		render(w, r, web.PopularGrid(nil, "Save your etp_rt token in Settings first."))
 		return
 	}
 
 	s.mu.RLock()
 	api := s.api
 	s.mu.RUnlock()
-	seasons, err := api.GetSeasons(contentId, "ja-JP", "en-US")
-	if err != nil {
-		render(w, r, web.BrowseSeriesResult(media.Series{}, contentId, nil, "Failed to list seasons: "+err.Error()))
+
+	// A Crunchyroll series URL drills straight into the seasons list.
+	if contentType, contentId, err := crunchy.ParseContentURL(q); err == nil {
+		if contentType == "watch" {
+			render(w, r, web.PopularGrid(nil, "That's an episode link. Browse from a /series/ page to pick episodes."))
+			return
+		}
+		seasons, err := api.GetSeasons(contentId, "ja-JP", "en-US")
+		if err != nil {
+			render(w, r, web.BrowseSeriesResult(media.Series{}, contentId, nil, "Failed to list seasons: "+err.Error()))
+			return
+		}
+		// Best-effort series hero: a missing series fetch degrades to the empty
+		// hero (which still renders the Download-series button + the season log).
+		series, _ := api.GetSeries(contentId)
+		render(w, r, web.BrowseSeriesResult(series, contentId, seasons, ""))
 		return
 	}
-	// Best-effort series hero: a missing series fetch degrades to the empty
-	// hero (which still renders the Download-series button + the season log).
-	series, _ := api.GetSeries(contentId)
-	render(w, r, web.BrowseSeriesResult(series, contentId, seasons, ""))
+
+	// Empty query → popular grid.
+	if q == "" {
+		panels, err := api.BrowsePopular(36, 0)
+		if err != nil {
+			render(w, r, web.PopularGrid(nil, "Popular anime is unavailable right now."))
+			return
+		}
+		render(w, r, web.PopularGrid(panels, ""))
+		return
+	}
+
+	// Otherwise treat q as a title search.
+	hits, err := api.SearchSeries(q, 20)
+	if err != nil || len(hits) == 0 {
+		render(w, r, web.SearchResults(nil, "No results for \""+q+"\"."))
+		return
+	}
+	render(w, r, web.SearchResults(hits, ""))
 }
 
 func (s *Server) handleSeasonEpisodes(w http.ResponseWriter, r *http.Request) {

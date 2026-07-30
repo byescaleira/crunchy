@@ -23,10 +23,15 @@ type fakeAPI struct {
 	infoErr    error
 	series     media.Series
 	seriesErr  error
+	panels     []media.BrowsePanel
+	panelsErr  error
+	hits       []media.SearchHit
+	hitsErr    error
 
 	seasonReq    string
 	episodeReqID string
 	seriesReqID  string
+	searchReq    string
 }
 
 func (f *fakeAPI) GetSeasons(contentId, audioLocale, subLocale string) ([]media.Season, error) {
@@ -43,6 +48,13 @@ func (f *fakeAPI) GetEpisodeInfo(id string) (media.EpisodeInfo, error) {
 func (f *fakeAPI) GetSeries(id string) (media.Series, error) {
 	f.seriesReqID = id
 	return f.series, f.seriesErr
+}
+func (f *fakeAPI) BrowsePopular(n, start int) ([]media.BrowsePanel, error) {
+	return f.panels, f.panelsErr
+}
+func (f *fakeAPI) SearchSeries(q string, n int) ([]media.SearchHit, error) {
+	f.searchReq = q
+	return f.hits, f.hitsErr
 }
 
 func newTestServer(t *testing.T) *Server {
@@ -106,7 +118,7 @@ func TestSettingsPost_EmptyToken(t *testing.T) {
 func TestBrowsePost_NotConfigured(t *testing.T) {
 	s := newTestServer(t)
 	h := s.Handler()
-	r, w := postForm("/browse", "url=https://www.crunchyroll.com/series/ABCDEFGHI")
+	r, w := postForm("/browse", "q=https://www.crunchyroll.com/series/ABCDEFGHI")
 	got := body(t, h, r, w)
 	if !strings.Contains(got, "etp_rt") {
 		t.Errorf("expected a 'save token first' message, got: %s", got)
@@ -122,7 +134,7 @@ func TestBrowsePost_Seasons(t *testing.T) {
 		},
 	}
 	h := s.Handler()
-	r, w := postForm("/browse", "url=https://www.crunchyroll.com/series/ABCDEFGHI")
+	r, w := postForm("/browse", "q=https://www.crunchyroll.com/series/ABCDEFGHI")
 	got := body(t, h, r, w)
 	if !strings.Contains(got, "Season 1") || !strings.Contains(got, "Season 2") {
 		t.Errorf("expected both season cards, got: %s", got)
@@ -136,10 +148,79 @@ func TestBrowsePost_BadURL(t *testing.T) {
 	s := newTestServer(t)
 	s.api = &fakeAPI{}
 	h := s.Handler()
-	r, w := postForm("/browse", "url=not-a-url")
+	// A non-URL, non-empty query falls through to a title search; with no
+	// results the page shows a friendly "No results" message (not an "Invalid
+	// URL" error — the unified box accepts titles).
+	r, w := postForm("/browse", "q=not-a-url")
 	got := body(t, h, r, w)
-	if !strings.Contains(got, "Invalid URL") {
-		t.Errorf("expected Invalid URL error, got: %s", got)
+	if !strings.Contains(got, "No results") {
+		t.Errorf("expected a 'No results' message, got: %s", got)
+	}
+}
+
+func TestBrowse_GetPopular(t *testing.T) {
+	s := newTestServer(t)
+	s.api = &fakeAPI{
+		panels: []media.BrowsePanel{
+			{ID: "PANELID001", Title: "Frieren", SlugTitle: "frieren"},
+		},
+	}
+	h := s.Handler()
+	r, w := get("/browse")
+	got := body(t, h, r, w)
+	if !strings.Contains(got, "Frieren") {
+		t.Errorf("popular grid missing the panel title; got: %s", got)
+	}
+	// The card's "List seasons" button posts the reconstructed series URL as q.
+	if !strings.Contains(got, "List seasons") {
+		t.Errorf("popular card missing the List seasons button; got: %s", got)
+	}
+	if !strings.Contains(got, "series/PANELID001/frieren") {
+		t.Errorf("popular card missing the reconstructed series URL; got: %s", got)
+	}
+}
+
+func TestBrowse_GetPopular_NotConfigured(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler()
+	r, w := get("/browse")
+	got := body(t, h, r, w)
+	if !strings.Contains(got, "etp_rt") {
+		t.Errorf("unconfigured browse should prompt for a token; got: %s", got)
+	}
+}
+
+func TestBrowsePost_TitleSearch(t *testing.T) {
+	s := newTestServer(t)
+	s.api = &fakeAPI{
+		hits: []media.SearchHit{
+			{ID: "HITID00001", Title: "Frieren", SlugTitle: "frieren-beyond-journey"},
+		},
+	}
+	h := s.Handler()
+	r, w := postForm("/browse", "q=Frieren")
+	got := body(t, h, r, w)
+	if !strings.Contains(got, "Frieren") {
+		t.Errorf("search results missing the hit title; got: %s", got)
+	}
+	if !strings.Contains(got, "Search results") {
+		t.Errorf("expected the search-results header; got: %s", got)
+	}
+	if s.api.(*fakeAPI).searchReq != "Frieren" {
+		t.Errorf("SearchSeries got %q, want Frieren", s.api.(*fakeAPI).searchReq)
+	}
+}
+
+func TestBrowsePost_EmptyQuery(t *testing.T) {
+	s := newTestServer(t)
+	s.api = &fakeAPI{
+		panels: []media.BrowsePanel{{ID: "PANELID002", Title: "Solo Leveling", SlugTitle: "solo-leveling"}},
+	}
+	h := s.Handler()
+	r, w := postForm("/browse", "q=")
+	got := body(t, h, r, w)
+	if !strings.Contains(got, "Solo Leveling") || !strings.Contains(got, "Popular now") {
+		t.Errorf("empty query should re-show the popular grid; got: %s", got)
 	}
 }
 

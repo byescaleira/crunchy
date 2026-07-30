@@ -45,30 +45,27 @@ templ SettingsPage(saved bool, errText string) {
 	}
 }
 
-// BrowsePage renders the browse panel: a compact series-URL form, a #seasons
-// target that the series hero + season log fill via HTMX, an #episodes target
-// for the episode grid, and a #download-queue transmission log that self-loads
-// and refreshes when a download is submitted.
-templ BrowsePage(seasons []media.Season, seriesURL string, errText string) {
+// BrowsePage renders the browse panel: one unified search box (paste a series
+// URL or type a title — the app tells them apart), a #seasons target that the
+// popular grid fills on load and that search/URL results swap into via HTMX, an
+// #episodes target for the episode grid, and a #download-queue transmission log
+// that self-loads and refreshes when a download is submitted.
+templ BrowsePage(popular []media.BrowsePanel, errText string) {
 	@Layout("Browse", "browse") {
 		<div class="flex flex-col gap-4">
-			@eyebrow("Browse a series")
+			@eyebrow("Browse")
 			<form hx-post="/browse" hx-target="#seasons" hx-swap="innerHTML" class="join">
 				<input
 					type="text"
-					name="url"
+					name="q"
 					class="input input-bordered join-item rounded-field font-mono w-full"
-					placeholder="https://www.crunchyroll.com/series/..."
-					value={ seriesURL }
+					placeholder="Paste a series URL or search by title"
 				/>
-				<button class="btn btn-primary join-item rounded-field font-display uppercase tracking-wider">List seasons</button>
+				<button class="btn btn-primary join-item rounded-field font-display uppercase tracking-wider">Search</button>
 			</form>
 
 			<div id="seasons" class="flex flex-col gap-2">
-				if errText != "" {
-					@Alert("error", errText)
-				}
-				<p class="text-sm text-base-content/40 font-mono">Paste a series URL to load its seasons.</p>
+				@PopularGrid(popular, errText)
 			</div>
 
 			<div>
@@ -93,6 +90,74 @@ templ BrowsePage(seasons []media.Season, seriesURL string, errText string) {
 			</div>
 		</div>
 	}
+}
+
+// PopularGrid renders the most-popular-anime grid swapped into #seasons on load
+// and on an empty search. Empty + no error shows a quiet hint.
+templ PopularGrid(panels []media.BrowsePanel, errText string) {
+	if errText != "" {
+		@Alert("error", errText)
+	}
+	if len(panels) == 0 && errText == "" {
+		<p class="text-sm text-base-content/40 font-mono">No popular anime available right now.</p>
+	}
+	if len(panels) > 0 {
+		@eyebrowInline("Popular now")
+		<div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3 mt-2">
+			for _, p := range panels {
+				@seriesResultCard(p.ID, p.Title, p.SlugTitle, p.Images, p.SeriesLaunchYear)
+			}
+		</div>
+	}
+}
+
+// SearchResults renders a title-search result grid swapped into #seasons.
+templ SearchResults(hits []media.SearchHit, errText string) {
+	if errText != "" {
+		@Alert("error", errText)
+	}
+	if len(hits) == 0 && errText == "" {
+		<p class="text-sm text-base-content/40 font-mono">No results.</p>
+	}
+	if len(hits) > 0 {
+		@eyebrowInline("Search results")
+		<div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3 mt-2">
+			for _, h := range hits {
+				@seriesResultCard(h.ID, h.Title, h.SlugTitle, h.Images, 0)
+			}
+		</div>
+	}
+}
+
+// seriesResultCard renders one series as a portrait poster card with a "List
+// seasons" button. The button posts the reconstructed /series/<id>/<slug> URL as
+// the unified `q` field, so it reuses the existing URL drill-down (seasons list
+// + series hero) without a separate code path.
+templ seriesResultCard(id, title, slug string, img media.Images, year int) {
+	<div class="card bg-base-100 border border-base-300 rounded-box overflow-hidden">
+		if image, ok := media.BestImage(img.PosterTall); ok && image.Source != "" {
+			<img src={ image.Source } alt={ title } class="w-full aspect-[2/3] object-cover" loading="lazy"/>
+		} else {
+			<div class="w-full aspect-[2/3] bg-base-300/60 flex items-center justify-center">
+				<span class="font-mono text-xs text-base-content/30">no art</span>
+			</div>
+		}
+		<div class="card-body gap-1.5 p-3">
+			<h3 class="font-display text-sm leading-tight line-clamp-2" title={ title }>{ title }</h3>
+			if year != 0 {
+				<span class="font-mono text-xs text-base-content/50">{ year }</span>
+			}
+			<button
+				class="btn btn-primary btn-sm rounded-field font-display uppercase tracking-wider w-full"
+				hx-post="/browse"
+				hx-target="#seasons"
+				hx-swap="innerHTML"
+				hx-vals={ fmt.Sprintf("{\"q\":%q}", "https://www.crunchyroll.com/series/"+id+"/"+slug) }
+			>
+				List seasons
+			</button>
+		</div>
+	</div>
 }
 
 // BrowseSeriesResult is the HTMX partial swapped into #seasons after a /browse

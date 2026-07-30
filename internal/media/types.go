@@ -200,3 +200,37 @@ func BestImage(imgs [][]Image) (Image, bool) {
 	row := imgs[0]
 	return row[len(row)-1], true
 }
+
+// BrowsePanel is one entry from the discover/browse endpoint (the popular-anime
+// grid). The endpoint is community-documented, so these tags are inferred.
+type BrowsePanel struct {
+	ID               string   `json:"id"`
+	Title            string   `json:"title"`
+	SlugTitle        string   `json:"slug_title"`
+	SeriesLaunchYear int      `json:"series_launch_year"`
+	Images           Images   `json:"images"`
+	TenantCategories []string `json:"tenant_categories"`
+}
+
+// BrowseResponse wraps the browse endpoint's data list.
+type BrowseResponse struct {
+	Data []BrowsePanel `json:"data"`
+}
+
+// SearchHit is one series result from the discover/search endpoint.
+type SearchHit struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	SlugTitle   string `json:"slug_title"`
+	Description string `json:"description"`
+	Images      Images `json:"images"`
+}
+
+// SearchGroup is one typed bucket in a search response (e.g. type "series"). The
+// search response shape is community-documented and varies — Data may be a list
+// of these groups or a flat list of hits — so the decoder tolerates both.
+type SearchGroup struct {
+	Type  string      `json:"type"`
+	Count int         `json:"count"`
+	Items []SearchHit `json:"items"`
+}
