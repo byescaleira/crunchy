@@ -31,6 +31,7 @@ type crunchyAPI interface {
 	GetSeasons(contentId, audioLocale, subLocale string) ([]media.Season, error)
 	GetSeasonEpisodes(contentId, audioLocale, subLocale string) ([]media.SeasonEpisode, error)
 	GetEpisodeInfo(id string) (media.EpisodeInfo, error)
+	GetSeries(id string) (media.Series, error)
 }
 
 // DownloadOpts carries the user's choices from the download-options modal into a
@@ -64,10 +65,12 @@ type Server struct {
 	cfgPath string
 	debug   bool
 
-	mu        sync.RWMutex
-	api       crunchyAPI
-	buildTask func(contentId string, opts DownloadOpts) jobs.Task
-	outputDir string
+	mu               sync.RWMutex
+	api              crunchyAPI
+	buildTask        func(contentId string, opts DownloadOpts) jobs.Task
+	buildSeasonTasks func(seasonID string, opts DownloadOpts) ([]jobs.Task, string, error)
+	buildSeriesTasks func(seriesID string, opts DownloadOpts) ([]jobs.Task, string, error)
+	outputDir        string
 }
 
 // New creates a Server rooted at dataDir. If etpRt is empty it tries to load it
@@ -113,6 +116,8 @@ func (s *Server) configure(etpRt, outputDir string) error {
 	s.api = client
 	s.outputDir = outputDir
 	s.buildTask = makeBuildTask(client, s.debug, outputDir)
+	s.buildSeasonTasks = makeSeasonTaskBuilder(client, s.debug)
+	s.buildSeriesTasks = makeSeriesTaskBuilder(client, s.debug)
 	s.mu.Unlock()
 	return s.saveConfig(config{EtpRt: etpRt, OutputDir: outputDir})
 }
@@ -150,6 +155,138 @@ func makeBuildTask(client *crunchy.Client, debug bool, outputDir string) func(st
 		}
 	}
 }
+
+// makeSeasonTaskBuilder returns a factory that discovers a season's episodes and
+// builds one jobs.Task per episode (each running the full download.Episode
+// pipeline), plus a parent label. The tasks run sequentially inside an
+// EnqueueBatch parent so the Widevine keys-ordering invariant holds across
+// episodes and progress aggregates across them.
+func makeSeasonTaskBuilder(client *crunchy.Client, debug bool) func(string, DownloadOpts) ([]jobs.Task, string, error) {
+	return func(seasonID string, opts DownloadOpts) ([]jobs.Task, string, error) {
+		episodes, err := client.GetSeasonEpisodes(seasonID, "ja-JP", "en-US")
+		if err != nil {
+			return nil, "", fmt.Errorf("list season episodes: %w", err)
+		}
+		tasks := make([]jobs.Task, 0, len(episodes))
+		for _, ep := range episodes {
+			tasks = append(tasks, seasonEpisodeTask(client, debug, ep, opts))
+		}
+		return tasks, seasonLabel(episodes), nil
+	}
+}
+
+// makeSeriesTaskBuilder returns a factory that discovers every season of a
+// series, then every episode in each season, and builds one jobs.Task per
+// episode (flattened across seasons), plus a parent label.
+func makeSeriesTaskBuilder(client *crunchy.Client, debug bool) func(string, DownloadOpts) ([]jobs.Task, string, error) {
+	return func(seriesID string, opts DownloadOpts) ([]jobs.Task, string, error) {
+		seasons, err := client.GetSeasons(seriesID, "ja-JP", "en-US")
+		if err != nil {
+			return nil, "", fmt.Errorf("list seasons: %w", err)
+		}
+		var tasks []jobs.Task
+		var firstEpisode media.SeasonEpisode
+		for _, s := range seasons {
+			episodes, err := client.GetSeasonEpisodes(s.ID, "ja-JP", "en-US")
+			if err != nil {
+				return nil, "", fmt.Errorf("list season %v episodes: %w", s.SeasonNumber, err)
+			}
+			for _, ep := range episodes {
+				if firstEpisode.SeriesTitle == "" {
+					firstEpisode = ep
+				}
+				tasks = append(tasks, seasonEpisodeTask(client, debug, ep, opts))
+			}
+		}
+		return tasks, seriesLabel(seriesID, firstEpisode, client), nil
+	}
+}
+
+// seasonEpisodeTask builds one per-episode Task from a season-episode list entry.
+// The EpisodeInfo is built from the list entry (which already carries the W1
+// rich metadata), so no per-episode GetEpisodeInfo round-trip is needed.
+func seasonEpisodeTask(client *crunchy.Client, debug bool, ep media.SeasonEpisode, opts DownloadOpts) jobs.Task {
+	return func(p download.Progress) error {
+		d := &download.Downloader{
+			API:          client,
+			VideoQuality: opts.VideoQuality,
+			AudioQuality: opts.AudioQuality,
+			AudioLangs:   opts.AudioLangs,
+			SubsLangs:    opts.SubsLangs,
+			OutputDir:    opts.OutputDir,
+			Format:       opts.Format,
+			Debug:        debug,
+			Progress:     p,
+		}
+		return d.Episode(ep.ID, download.EpisodeInfoFromSeasonEpisode(ep))
+	}
+}
+
+// seasonLabel returns a parent label for a season batch, derived from the first
+// episode's series/season titles.
+func seasonLabel(episodes []media.SeasonEpisode) string {
+	if len(episodes) == 0 {
+		return "Season"
+	}
+	ep := episodes[0]
+	if ep.SeriesTitle != "" {
+		return fmt.Sprintf("%s — Season %v", ep.SeriesTitle, ep.SeasonNumber)
+	}
+	return fmt.Sprintf("Season %v", ep.SeasonNumber)
+}
+
+// seriesLabel returns a parent label for a series batch, preferring the series
+// title from GetSeries, then the first episode's SeriesTitle, then the id.
+func seriesLabel(seriesID string, first media.SeasonEpisode, client *crunchy.Client) string {
+	if series, err := client.GetSeries(seriesID); err == nil && series.Title != "" {
+		return series.Title
+	}
+	if first.SeriesTitle != "" {
+		return first.SeriesTitle
+	}
+	return seriesID
+}
+
+// enqueue routes a download request to the right Manager method by granularity,
+// returning the resulting (parent) job. episode → Enqueue (one job); season /
+// series → EnqueueBatch (one parent job spanning many episode sub-tasks). It is
+// the single entry point shared by the web form (W3) and the JSON API (W6).
+func (s *Server) enqueue(kind, id string, opts DownloadOpts) (*jobs.Job, error) {
+	s.mu.RLock()
+	buildTask := s.buildTask
+	buildSeason := s.buildSeasonTasks
+	buildSeries := s.buildSeriesTasks
+	s.mu.RUnlock()
+
+	switch kind {
+	case "season":
+		if buildSeason == nil {
+			return nil, errNotConfigured
+		}
+		tasks, label, err := buildSeason(id, opts)
+		if err != nil {
+			return nil, err
+		}
+		return s.manager.EnqueueBatch(label, tasks), nil
+	case "series":
+		if buildSeries == nil {
+			return nil, errNotConfigured
+		}
+		tasks, label, err := buildSeries(id, opts)
+		if err != nil {
+			return nil, err
+		}
+		return s.manager.EnqueueBatch(label, tasks), nil
+	default:
+		if buildTask == nil {
+			return nil, errNotConfigured
+		}
+		return s.manager.Enqueue(s.episodeTitle(id), buildTask(id, opts)), nil
+	}
+}
+
+// errNotConfigured is returned by enqueue when no token is on file.
+var errNotConfigured = fmt.Errorf("save your etp_rt token in Settings first")
 
 // Handler returns the routes. It uses Go 1.22 ServeMux method+pattern routing.
 func (s *Server) Handler() http.Handler {

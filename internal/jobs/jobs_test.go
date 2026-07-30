@@ -144,6 +144,98 @@ func TestManager_GetList(t *testing.T) {
 	}
 }
 
+// TestEnqueueBatch_OrderedAggregateContinue pins the batch contract: sub-tasks
+// run sequentially in order, segment progress aggregates across sub-tasks, a
+// failing sub-task is skipped-and-continued (the rest still run), the first
+// error is recorded, and the parent still reaches a terminal state.
+func TestEnqueueBatch_OrderedAggregateContinue(t *testing.T) {
+	m := NewManager()
+
+	var order []int
+	var mu sync.Mutex
+	record := func(n int) {
+		mu.Lock()
+		order = append(order, n)
+		mu.Unlock()
+	}
+
+	tasks := []Task{
+		// sub-task 1: succeeds, reports 2 of 5 segments.
+		func(p download.Progress) error {
+			record(1)
+			p.Segment(2, 5)
+			return nil
+		},
+		// sub-task 2: fails, reports 3 of 3 segments.
+		func(p download.Progress) error {
+			record(2)
+			p.Segment(3, 3)
+			return errBoom
+		},
+		// sub-task 3: succeeds, reports no segments — still runs despite sub-task 2's error.
+		func(p download.Progress) error {
+			record(3)
+			return nil
+		},
+	}
+
+	j := m.EnqueueBatch("Season 1", tasks)
+	<-j.Done()
+
+	// All three sub-tasks ran, in order, despite the middle failure.
+	mu.Lock()
+	wantOrder := []int{1, 2, 3}
+	if len(order) != len(wantOrder) {
+		t.Errorf("sub-task order = %v, want %v", order, wantOrder)
+	} else {
+		for i, want := range wantOrder {
+			if order[i] != want {
+				t.Errorf("order[%d] = %d, want %d (full: %v)", i, order[i], want, order)
+			}
+		}
+	}
+	mu.Unlock()
+
+	// First error recorded; parent ends in error.
+	if got := j.Status(); got != StatusError {
+		t.Fatalf("status = %q, want %q", got, StatusError)
+	}
+	if j.Error() != errBoom.Error() {
+		t.Errorf("Error = %q, want %q", j.Error(), errBoom.Error())
+	}
+
+	// Segment aggregation: 2 of 5 from sub-task 1, then sub-task 2's 3 of 3 is
+	// added on top of the 2/5 base → 5 of 8. The last reported segment is (5, 8).
+	done, total := j.Segment()
+	if done != 5 || total != 8 {
+		t.Errorf("aggregate Segment = (%d,%d), want (5,8)", done, total)
+	}
+
+	// The aggregate segment events are present in the stream.
+	var segs []Event
+	for e := range j.Events() {
+		if e.Type == EventSegment {
+			segs = append(segs, e)
+		}
+	}
+	if len(segs) < 2 {
+		t.Fatalf("expected at least 2 segment events, got %d", len(segs))
+	}
+	// First segment is sub-task 1's (2,5); the (5,8) aggregate must appear.
+	if segs[0].Done != 2 || segs[0].Total != 5 {
+		t.Errorf("first segment = (%d,%d), want (2,5)", segs[0].Done, segs[0].Total)
+	}
+	var hasAggregate bool
+	for _, e := range segs {
+		if e.Done == 5 && e.Total == 8 {
+			hasAggregate = true
+		}
+	}
+	if !hasAggregate {
+		t.Errorf("aggregate segment (5,8) missing from %v", segs)
+	}
+}
+
 type boomErr string
 
 func (b boomErr) Error() string { return string(b) }

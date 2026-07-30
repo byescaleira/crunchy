@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,9 +20,12 @@ type fakeAPI struct {
 	episodeErr error
 	info       media.EpisodeInfo
 	infoErr    error
+	series     media.Series
+	seriesErr  error
 
 	seasonReq    string
 	episodeReqID string
+	seriesReqID  string
 }
 
 func (f *fakeAPI) GetSeasons(contentId, audioLocale, subLocale string) ([]media.Season, error) {
@@ -34,6 +38,10 @@ func (f *fakeAPI) GetSeasonEpisodes(contentId, audioLocale, subLocale string) ([
 }
 func (f *fakeAPI) GetEpisodeInfo(id string) (media.EpisodeInfo, error) {
 	return f.info, f.infoErr
+}
+func (f *fakeAPI) GetSeries(id string) (media.Series, error) {
+	f.seriesReqID = id
+	return f.series, f.seriesErr
 }
 
 func newTestServer(t *testing.T) *Server {
@@ -243,6 +251,116 @@ func TestDownloadPost_NotConfigured(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "etp_rt") {
 		t.Errorf("expected 'save token' message, got: %s", w.Body.String())
+	}
+}
+
+func TestDownloadNew_SeasonSummary(t *testing.T) {
+	s := newTestServer(t)
+	s.api = &fakeAPI{
+		episodes: []media.SeasonEpisode{
+			{ID: "ep1", EpisodeNumber: 1, SeasonNumber: 2, SeriesTitle: "Frieren"},
+			{ID: "ep2", EpisodeNumber: 2, SeasonNumber: 2, SeriesTitle: "Frieren"},
+		},
+	}
+	h := s.Handler()
+	r, w := get("/downloads/new?kind=season&id=SEASON2")
+	got := body(t, h, r, w)
+	if !strings.Contains(got, "Download season 2 of Frieren") {
+		t.Errorf("expected enriched season summary, got: %s", got)
+	}
+	if !strings.Contains(got, "2 episodes") {
+		t.Errorf("expected episode count in summary, got: %s", got)
+	}
+}
+
+func TestDownloadNew_SeriesSummary(t *testing.T) {
+	s := newTestServer(t)
+	s.api = &fakeAPI{
+		seasons: []media.Season{
+			{ID: "s1", SeasonNumber: 1, NumberOfEpisodes: 12},
+			{ID: "s2", SeasonNumber: 2, NumberOfEpisodes: 24},
+		},
+		series: media.Series{Title: "Frieren"},
+	}
+	h := s.Handler()
+	r, w := get("/downloads/new?kind=series&id=SERIES1")
+	got := body(t, h, r, w)
+	if !strings.Contains(got, "Download series Frieren") {
+		t.Errorf("expected enriched series summary, got: %s", got)
+	}
+	if !strings.Contains(got, "2 seasons") || !strings.Contains(got, "36 episodes") {
+		t.Errorf("expected season/episode counts in summary, got: %s", got)
+	}
+}
+
+func TestDownloadPost_Season(t *testing.T) {
+	s := newTestServer(t)
+	s.buildSeasonTasks = func(seasonID string, opts DownloadOpts) ([]jobs.Task, string, error) {
+		if seasonID != "SEASON2" {
+			t.Errorf("buildSeasonTasks got id %q, want SEASON2", seasonID)
+		}
+		tasks := []jobs.Task{
+			func(download.Progress) error { return nil },
+			func(download.Progress) error { return nil },
+		}
+		return tasks, "Frieren — Season 2", nil
+	}
+	h := s.Handler()
+	r, w := postForm("/downloads", "kind=season&id=SEASON2&audioLangs=ja-JP&subsLangs=en-US")
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	if w.Body.Len() != 0 {
+		t.Errorf("expected empty body on success, got: %s", w.Body.String())
+	}
+	// A season is one batch parent job (not one job per episode).
+	if n := len(s.manager.List()); n != 1 {
+		t.Errorf("expected 1 batch job, got %d", n)
+	}
+	if s.manager.List()[0].Label != "Frieren — Season 2" {
+		t.Errorf("expected batch label, got %q", s.manager.List()[0].Label)
+	}
+}
+
+func TestDownloadPost_Series(t *testing.T) {
+	s := newTestServer(t)
+	s.buildSeriesTasks = func(seriesID string, opts DownloadOpts) ([]jobs.Task, string, error) {
+		tasks := []jobs.Task{
+			func(download.Progress) error { return nil },
+			func(download.Progress) error { return nil },
+			func(download.Progress) error { return nil },
+		}
+		return tasks, "Frieren", nil
+	}
+	h := s.Handler()
+	r, w := postForm("/downloads", "kind=series&id=SERIES1&audioLangs=ja-JP")
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	// A series is one batch parent job spanning all seasons/episodes.
+	if n := len(s.manager.List()); n != 1 {
+		t.Errorf("expected 1 batch job, got %d", n)
+	}
+}
+
+func TestDownloadPost_SeasonDiscoveryFails(t *testing.T) {
+	s := newTestServer(t)
+	s.buildSeasonTasks = func(seasonID string, opts DownloadOpts) ([]jobs.Task, string, error) {
+		return nil, "", fmt.Errorf("list season episodes: boom")
+	}
+	h := s.Handler()
+	r, w := postForm("/downloads", "kind=season&id=SEASON2&audioLangs=ja-JP")
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 on discovery failure, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "boom") {
+		t.Errorf("expected discovery error surfaced, got: %s", w.Body.String())
+	}
+	if len(s.manager.List()) != 0 {
+		t.Error("failed discovery must not enqueue a job")
 	}
 }
 

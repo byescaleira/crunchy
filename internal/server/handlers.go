@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -45,25 +46,25 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleBrowsePost(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		render(w, r, web.SeasonsList(nil, err.Error()))
+		render(w, r, web.SeasonsList(nil, "", err.Error()))
 		return
 	}
 	url := strings.TrimSpace(r.FormValue("url"))
 
 	if !s.Configured() {
-		render(w, r, web.SeasonsList(nil, "Save your etp_rt token in Settings first."))
+		render(w, r, web.SeasonsList(nil, "", "Save your etp_rt token in Settings first."))
 		return
 	}
 
 	contentType, contentId, err := crunchy.ParseContentURL(url)
 	if err != nil {
-		render(w, r, web.SeasonsList(nil, err.Error()))
+		render(w, r, web.SeasonsList(nil, "", err.Error()))
 		return
 	}
 	// /browse is for series pages; an episode /watch/ link belongs to the
 	// download flow, not the seasons list.
 	if contentType == "watch" {
-		render(w, r, web.SeasonsList(nil, "That's an episode link. Browse from a /series/ page to pick episodes."))
+		render(w, r, web.SeasonsList(nil, "", "That's an episode link. Browse from a /series/ page to pick episodes."))
 		return
 	}
 
@@ -72,10 +73,10 @@ func (s *Server) handleBrowsePost(w http.ResponseWriter, r *http.Request) {
 	s.mu.RUnlock()
 	seasons, err := api.GetSeasons(contentId, "ja-JP", "en-US")
 	if err != nil {
-		render(w, r, web.SeasonsList(nil, "Failed to list seasons: "+err.Error()))
+		render(w, r, web.SeasonsList(nil, "", "Failed to list seasons: "+err.Error()))
 		return
 	}
-	render(w, r, web.SeasonsList(seasons, ""))
+	render(w, r, web.SeasonsList(seasons, contentId, ""))
 }
 
 func (s *Server) handleSeasonEpisodes(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +100,54 @@ func (s *Server) handleSeasonEpisodes(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDownloadNew(w http.ResponseWriter, r *http.Request) {
 	kind := valueOr(r, "kind", "episode")
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
-	render(w, r, web.DownloadForm(s.downloadFormOpts(kind, id), nil))
+	opts := s.downloadFormOpts(kind, id)
+	if kind == "season" || kind == "series" {
+		if !s.Configured() {
+			s.renderDownloadForm422(w, r, opts, map[string]string{"_": "Save your etp_rt token in Settings first."})
+			return
+		}
+		if summary, ok := s.batchSummary(kind, id); ok {
+			opts.Summary = summary
+		}
+	}
+	render(w, r, web.DownloadForm(opts, nil))
+}
+
+// batchSummary best-effort enriches the modal headline for a season or series
+// target with real counts from the CMS (season N of <series>, M episodes; or
+// <series>, N seasons, M episodes). Returns ok=false on any failure so the
+// caller keeps the generic summary.
+func (s *Server) batchSummary(kind, id string) (string, bool) {
+	s.mu.RLock()
+	api := s.api
+	s.mu.RUnlock()
+	if api == nil {
+		return "", false
+	}
+	switch kind {
+	case "season":
+		episodes, err := api.GetSeasonEpisodes(id, "ja-JP", "en-US")
+		if err != nil || len(episodes) == 0 {
+			return "", false
+		}
+		ep := episodes[0]
+		return fmt.Sprintf("Download season %v of %s (%v episodes)", ep.SeasonNumber, ep.SeriesTitle, len(episodes)), true
+	case "series":
+		seasons, err := api.GetSeasons(id, "ja-JP", "en-US")
+		if err != nil || len(seasons) == 0 {
+			return "", false
+		}
+		total := 0
+		for _, s := range seasons {
+			total += s.NumberOfEpisodes
+		}
+		title := id
+		if series, err := api.GetSeries(id); err == nil && series.Title != "" {
+			title = series.Title
+		}
+		return fmt.Sprintf("Download series %s (%v seasons, %v episodes)", title, len(seasons), total), true
+	}
+	return "", false
 }
 
 // downloadFormOpts builds the modal view-model for a kind/target, applying
@@ -121,8 +169,8 @@ func (s *Server) downloadFormOpts(kind, id string) web.DownloadFormOpts {
 }
 
 // downloadSummary returns the modal headline for a target. For an episode it
-// best-effort resolves the title; season/series summaries are enriched with
-// episode/season counts in W4.
+// best-effort resolves the title; season/series get a generic headline here
+// (enriched with counts by batchSummary on the GET path).
 func (s *Server) downloadSummary(kind, id string) string {
 	switch kind {
 	case "season":
@@ -178,8 +226,8 @@ func (s *Server) handleDownloadPost(w http.ResponseWriter, r *http.Request) {
 	subs := r.Form["subsLangs"]
 
 	errs := map[string]string{}
-	if kind == "episode" && id == "" {
-		errs["_"] = "No episode selected."
+	if id == "" {
+		errs["_"] = "No target selected."
 	}
 	if len(audio) == 0 {
 		errs["audio"] = "Pick at least one audio language."
@@ -195,17 +243,6 @@ func (s *Server) handleDownloadPost(w http.ResponseWriter, r *http.Request) {
 			opts.OutputDir = dir
 		}
 		s.renderDownloadForm422(w, r, opts, errs)
-		return
-	}
-
-	s.mu.RLock()
-	buildTask := s.buildTask
-	s.mu.RUnlock()
-	if buildTask == nil {
-		opts := s.downloadFormOpts(kind, id)
-		opts.SelectedAudio = audio
-		opts.SelectedSubs = subs
-		s.renderDownloadForm422(w, r, opts, map[string]string{"_": "Save your etp_rt token in Settings first."})
 		return
 	}
 
@@ -226,18 +263,12 @@ func (s *Server) handleDownloadPost(w http.ResponseWriter, r *http.Request) {
 		opts.SubsLangs = []string{"en-US"}
 	}
 
-	// W3 supports the episode granularity. Season/series batch routing lands in
-	// W4 (EnqueueBatch); until then refuse them with a 422 rather than enqueueing
-	// a season id as if it were a single episode.
-	switch kind {
-	case "season", "series":
+	if _, err := s.enqueue(kind, id, opts); err != nil {
 		opts := s.downloadFormOpts(kind, id)
 		opts.SelectedAudio = audio
 		opts.SelectedSubs = subs
-		s.renderDownloadForm422(w, r, opts, map[string]string{"_": "Season and series downloads arrive in the next wave."})
+		s.renderDownloadForm422(w, r, opts, map[string]string{"_": err.Error()})
 		return
-	default:
-		s.manager.Enqueue(s.episodeTitle(id), buildTask(id, opts))
 	}
 
 	// Success: empty body + HX-Trigger. The layout's closeDownloadModal listener

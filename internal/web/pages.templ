@@ -1,6 +1,8 @@
 package web
 
 import (
+	"fmt"
+
 	"crunchyroll-downloader/internal/jobs"
 	"crunchyroll-downloader/internal/media"
 )
@@ -61,7 +63,7 @@ templ BrowsePage(seasons []media.Season, seriesURL string, errText string) {
 						<button class="btn btn-primary self-start">List seasons</button>
 					</form>
 					<div id="seasons" class="flex flex-col gap-2">
-						@SeasonsList(seasons, errText)
+						@SeasonsList(seasons, "", errText)
 					</div>
 				</div>
 			</div>
@@ -89,13 +91,22 @@ templ BrowsePage(seasons []media.Season, seriesURL string, errText string) {
 	}
 }
 
-// seasonsList is the HTMX partial swapped into #seasons after a /browse POST.
-templ SeasonsList(seasons []media.Season, errText string) {
+// SeasonsList is the HTMX partial swapped into #seasons after a /browse POST.
+// seriesID (the parsed series content id) is carried so a "Download entire
+// series" button can be rendered above the season cards; it's empty before the
+// user lists a series.
+templ SeasonsList(seasons []media.Season, seriesID, errText string) {
 	if errText != "" {
 		@Alert("error", errText)
 	}
 	if len(seasons) == 0 && errText == "" {
 		<p class="text-sm text-base-content/50">No seasons yet — paste a series URL above.</p>
+	}
+	if len(seasons) > 0 && seriesID != "" {
+		<div class="flex items-center justify-between gap-2 pb-1">
+			<span class="text-sm text-base-content/70">{ fmt.Sprintf("%v seasons", len(seasons)) }</span>
+			@DownloadButton("series", seriesID)
+		</div>
 	}
 	for _, s := range seasons {
 		@seasonCard(s)

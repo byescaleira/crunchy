@@ -188,6 +188,104 @@ func (m *Manager) run(j *Job, task Task) {
 	j.emit(Event{Type: EventDone, Status: StatusDone})
 }
 
+// EnqueueBatch records a parent job that runs tasks sequentially — one at a
+// time, reusing the Manager's single slot so two downloads never race (the
+// Widevine keys-ordering invariant holds across episodes, not just within one).
+// It aggregates segment progress across the sub-tasks and continues past a
+// sub-task error (skip-and-continue), recording the first error on the job but
+// still running the remaining sub-tasks. The returned parent Job is observable
+// (StatusQueued) before the runner begins; its events stream the aggregate.
+//
+// Use Enqueue for a single episode; EnqueueBatch for a season or series, where
+// each Task is one episode.
+func (m *Manager) EnqueueBatch(label string, tasks []Task) *Job {
+	j := &Job{
+		ID:     uuid.NewString(),
+		Label:  label,
+		events: make(chan Event, 256),
+		donec:  make(chan struct{}),
+		status: StatusQueued,
+	}
+	j.emit(Event{Type: EventStatus, Status: StatusQueued})
+
+	m.mu.Lock()
+	m.jobs[j.ID] = j
+	m.order = append(m.order, j.ID)
+	m.mu.Unlock()
+
+	go m.runBatch(j, tasks)
+	return j
+}
+
+// runBatch is the batch runner. It blocks on the serialization semaphore (so a
+// batch is run one sub-task at a time and never concurrently with another job),
+// runs each task with a batchProgress that aggregates segment ticks across the
+// sub-tasks, continues past a task error recording the first one, and ends the
+// parent in StatusError (if any sub-task failed) or StatusDone.
+func (m *Manager) runBatch(j *Job, tasks []Task) {
+	m.sem <- struct{}{}
+	defer func() {
+		<-m.sem
+		close(j.events)
+		close(j.donec)
+	}()
+
+	j.set(StatusDownloading, "")
+	j.emit(Event{Type: EventStatus, Status: StatusDownloading})
+
+	bp := &batchProgress{job: j}
+	var firstErr string
+	anyErr := false
+	for _, task := range tasks {
+		if err := task(bp); err != nil {
+			anyErr = true
+			if firstErr == "" {
+				firstErr = err.Error()
+			}
+		}
+		// Fold the just-finished sub-task's last segment tick into the cumulative
+		// base so the next sub-task's progress continues from there.
+		bp.baseDone += bp.curDone
+		bp.baseTotal += bp.curTotal
+		bp.curDone, bp.curTotal = 0, 0
+	}
+
+	if anyErr {
+		j.set(StatusError, firstErr)
+		j.emit(Event{Type: EventError, Message: firstErr})
+		j.emit(Event{Type: EventDone, Status: StatusError})
+		return
+	}
+	j.set(StatusDone, "")
+	j.emit(Event{Type: EventDone, Status: StatusDone})
+}
+
+// batchProgress adapts a parent batch Job onto the download.Progress seam,
+// aggregating segment progress across sequential sub-tasks. Each sub-task's
+// Segment(done, total) is reported as (baseDone+done, baseTotal+total), where
+// base accumulates the finalized (done, total) of completed sub-tasks so the
+// aggregate grows monotonically across the batch. Printf passes through as a
+// message event (so each episode's progress lines still stream).
+type batchProgress struct {
+	job       *Job
+	baseDone  int
+	baseTotal int
+	curDone   int
+	curTotal  int
+}
+
+func (b *batchProgress) Printf(format string, args ...any) {
+	b.job.emit(Event{Type: EventMessage, Message: fmt.Sprintf(format, args...)})
+}
+
+func (b *batchProgress) Segment(done, total int) {
+	b.curDone, b.curTotal = done, total
+	aggDone := b.baseDone + done
+	aggTotal := b.baseTotal + total
+	b.job.setSegment(aggDone, aggTotal)
+	b.job.emit(Event{Type: EventSegment, Done: aggDone, Total: aggTotal})
+}
+
 // Get returns the job with id, or (nil, false) if it does not exist.
 func (m *Manager) Get(id string) (*Job, bool) {
 	m.mu.Lock()

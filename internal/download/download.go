@@ -607,6 +607,33 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) error
 	return d.merge(videoFile, audioTracks, subTracks, outputFile, coverFile, d.Format, info)
 }
 
+// EpisodeInfoFromSeasonEpisode builds the EpisodeInfo the per-episode download
+// path needs from a season-episode list entry, copying the rich W1 fields
+// (series/season ids, air date, duration, maturity, subtitle locales, dub
+// versions) into EpisodeMetadata. Shared by Downloader.Season and the server's
+// per-episode batch tasks so the two never drift apart.
+func EpisodeInfoFromSeasonEpisode(episode media.SeasonEpisode) media.EpisodeInfo {
+	return media.EpisodeInfo{
+		EpisodeMetadata: media.EpisodeMetadata{
+			SeriesTitle:        episode.SeriesTitle,
+			SeriesID:           episode.SeriesID,
+			SeasonNumber:       episode.SeasonNumber,
+			SeasonTitle:        episode.SeasonTitle,
+			EpisodeNumber:      episode.EpisodeNumber,
+			AudioLocale:        episode.AudioLocale,
+			Versions:           episode.Versions,
+			AvailabilityStarts: episode.AvailabilityStarts,
+			EpisodeAirDate:     episode.EpisodeAirDate,
+			DurationMS:         episode.DurationMS,
+			IsPremiumOnly:      episode.IsPremiumOnly,
+			MaturityRatings:    episode.MaturityRatings,
+			SubtitleLocales:    episode.SubtitleLocales,
+		},
+		Title:       episode.Title,
+		Description: episode.Description,
+	}
+}
+
 // Season downloads every episode in a season list, building each episode's
 // EpisodeInfo from its SeasonEpisode entry. A failed episode is logged and
 // skipped so one bad episode can't abort the whole season.
@@ -614,25 +641,7 @@ func (d *Downloader) Season(episodes []media.SeasonEpisode) error {
 	d.Progress.Printf("Downloading season %v of %s (%v episodes)\n\n", episodes[0].SeasonNumber, episodes[0].SeriesTitle, len(episodes))
 
 	for _, episode := range episodes {
-		info := media.EpisodeInfo{
-			EpisodeMetadata: media.EpisodeMetadata{
-				SeriesTitle:        episode.SeriesTitle,
-				SeriesID:           episode.SeriesID,
-				SeasonNumber:       episode.SeasonNumber,
-				SeasonTitle:        episode.SeasonTitle,
-				EpisodeNumber:      episode.EpisodeNumber,
-				AudioLocale:        episode.AudioLocale,
-				Versions:           episode.Versions,
-				AvailabilityStarts: episode.AvailabilityStarts,
-				EpisodeAirDate:     episode.EpisodeAirDate,
-				DurationMS:         episode.DurationMS,
-				IsPremiumOnly:      episode.IsPremiumOnly,
-				MaturityRatings:    episode.MaturityRatings,
-				SubtitleLocales:    episode.SubtitleLocales,
-			},
-			Title:       episode.Title,
-			Description: episode.Description,
-		}
+		info := EpisodeInfoFromSeasonEpisode(episode)
 
 		if err := d.Episode(episode.ID, info); err != nil {
 			d.Progress.Printf("! Episode %v failed: %v\n", episode.EpisodeNumber, err)
