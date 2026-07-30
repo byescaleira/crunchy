@@ -103,7 +103,7 @@ templ PopularGrid(panels []media.BrowsePanel, errText string) {
 	}
 	if len(panels) > 0 {
 		@eyebrowInline("Popular now")
-		<div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3 mt-2">
+		<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 mt-2">
 			for _, p := range panels {
 				@seriesResultCard(p.ID, p.Title, p.SlugTitle, p.Images, p.SeriesLaunchYear)
 			}
@@ -121,7 +121,7 @@ templ SearchResults(hits []media.SearchHit, errText string) {
 	}
 	if len(hits) > 0 {
 		@eyebrowInline("Search results")
-		<div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3 mt-2">
+		<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 mt-2">
 			for _, h := range hits {
 				@seriesResultCard(h.ID, h.Title, h.SlugTitle, h.Images, 0)
 			}
@@ -129,33 +129,50 @@ templ SearchResults(hits []media.SearchHit, errText string) {
 	}
 }
 
-// seriesResultCard renders one series as a portrait poster card with a "List
-// seasons" button. The button posts the reconstructed /series/<id>/<slug> URL as
-// the unified `q` field, so it reuses the existing URL drill-down (seasons list
-// + series hero) without a separate code path.
+// seriesResultCard renders one series as a compact TV-guide card: a landscape
+// key-art banner (poster_wide, falling back to the portrait poster), the title,
+// a launch-year badge, and a "List seasons" button. The button posts the
+// reconstructed /series/<id>/<slug> URL as the unified `q` field, so it reuses
+// the existing URL drill-down (seasons list + series hero) without a separate
+// code path. Landscape art keeps the banner short so the grid reads as cards,
+// not full-screen posters.
 templ seriesResultCard(id, title, slug string, img media.Images, year int) {
-	<div class="card bg-base-100 border border-base-300 rounded-box overflow-hidden">
-		if image, ok := media.BestImage(img.PosterTall); ok && image.Source != "" {
-			<img src={ image.Source } alt={ title } class="w-full aspect-[2/3] object-cover" loading="lazy"/>
-		} else {
-			<div class="w-full aspect-[2/3] bg-base-300/60 flex items-center justify-center">
-				<span class="font-mono text-xs text-base-content/30">no art</span>
-			</div>
+	{{
+		var src string
+		if im, ok := media.BestImage(img.PosterWide); ok && im.Source != "" {
+			src = im.Source
+		} else if im, ok := media.BestImage(img.PosterTall); ok && im.Source != "" {
+			src = im.Source
 		}
+	}}
+	<div class="card bg-base-100 border border-base-300 rounded-box overflow-hidden hover:border-primary/50 transition-colors">
+		<div class="aspect-video bg-base-300/50 overflow-hidden">
+			if src != "" {
+				<img src={ src } alt={ title } class="w-full h-full object-cover" loading="lazy"/>
+			} else {
+				<div class="w-full h-full flex items-center justify-center">
+					<span class="font-mono text-xs text-base-content/30">no art</span>
+				</div>
+			}
+		</div>
 		<div class="card-body gap-1.5 p-3">
 			<h3 class="font-display text-sm leading-tight line-clamp-2" title={ title }>{ title }</h3>
-			if year != 0 {
-				<span class="font-mono text-xs text-base-content/50">{ year }</span>
-			}
-			<button
-				class="btn btn-primary btn-sm rounded-field font-display uppercase tracking-wider w-full"
-				hx-post="/browse"
-				hx-target="#seasons"
-				hx-swap="innerHTML"
-				hx-vals={ fmt.Sprintf("{\"q\":%q}", "https://www.crunchyroll.com/series/"+id+"/"+slug) }
-			>
-				List seasons
-			</button>
+			<div class="flex flex-wrap items-center gap-1">
+				if year != 0 {
+					<span class="badge badge-ghost badge-sm font-mono">{ year }</span>
+				}
+			</div>
+			<div class="mt-1">
+				<button
+					class="btn btn-primary btn-sm rounded-field font-display uppercase tracking-wider w-full"
+					hx-post="/browse"
+					hx-target="#seasons"
+					hx-swap="innerHTML"
+					hx-vals={ fmt.Sprintf("{\"q\":%q}", "https://www.crunchyroll.com/series/"+id+"/"+slug) }
+				>
+					List seasons
+				</button>
+			</div>
 		</div>
 	</div>
 }

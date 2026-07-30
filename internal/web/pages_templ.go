@@ -211,7 +211,7 @@ func PopularGrid(panels []media.BrowsePanel, errText string) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, " <div class=\"grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3 mt-2\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, " <div class=\"grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 mt-2\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -269,7 +269,7 @@ func SearchResults(hits []media.SearchHit, errText string) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, " <div class=\"grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3 mt-2\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, " <div class=\"grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 mt-2\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -288,10 +288,13 @@ func SearchResults(hits []media.SearchHit, errText string) templ.Component {
 	})
 }
 
-// seriesResultCard renders one series as a portrait poster card with a "List
-// seasons" button. The button posts the reconstructed /series/<id>/<slug> URL as
-// the unified `q` field, so it reuses the existing URL drill-down (seasons list
-// + series hero) without a separate code path.
+// seriesResultCard renders one series as a compact TV-guide card: a landscape
+// key-art banner (poster_wide, falling back to the portrait poster), the title,
+// a launch-year badge, and a "List seasons" button. The button posts the
+// reconstructed /series/<id>/<slug> URL as the unified `q` field, so it reuses
+// the existing URL drill-down (seasons list + series hero) without a separate
+// code path. Landscape art keeps the banner short so the grid reads as cards,
+// not full-screen posters.
 func seriesResultCard(id, title, slug string, img media.Images, year int) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
@@ -313,19 +316,25 @@ func seriesResultCard(id, title, slug string, img media.Images, year int) templ.
 			templ_7745c5c3_Var7 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "<div class=\"card bg-base-100 border border-base-300 rounded-box overflow-hidden\">")
+		var src string
+		if im, ok := media.BestImage(img.PosterWide); ok && im.Source != "" {
+			src = im.Source
+		} else if im, ok := media.BestImage(img.PosterTall); ok && im.Source != "" {
+			src = im.Source
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "<div class=\"card bg-base-100 border border-base-300 rounded-box overflow-hidden hover:border-primary/50 transition-colors\"><div class=\"aspect-video bg-base-300/50 overflow-hidden\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		if image, ok := media.BestImage(img.PosterTall); ok && image.Source != "" {
+		if src != "" {
 			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "<img src=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var8 string
-			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.ResolveAttributeValue(image.Source)
+			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.ResolveAttributeValue(src)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 139, Col: 26}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 151, Col: 18}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var8)
 			if templ_7745c5c3_Err != nil {
@@ -338,30 +347,30 @@ func seriesResultCard(id, title, slug string, img media.Images, year int) templ.
 			var templ_7745c5c3_Var9 string
 			templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.ResolveAttributeValue(title)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 139, Col: 40}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 151, Col: 32}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var9)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "\" class=\"w-full aspect-[2/3] object-cover\" loading=\"lazy\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "\" class=\"w-full h-full object-cover\" loading=\"lazy\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "<div class=\"w-full aspect-[2/3] bg-base-300/60 flex items-center justify-center\"><span class=\"font-mono text-xs text-base-content/30\">no art</span></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "<div class=\"w-full h-full flex items-center justify-center\"><span class=\"font-mono text-xs text-base-content/30\">no art</span></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "<div class=\"card-body gap-1.5 p-3\"><h3 class=\"font-display text-sm leading-tight line-clamp-2\" title=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "</div><div class=\"card-body gap-1.5 p-3\"><h3 class=\"font-display text-sm leading-tight line-clamp-2\" title=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var10 string
 		templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.ResolveAttributeValue(title)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 146, Col: 76}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 159, Col: 76}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var10)
 		if templ_7745c5c3_Err != nil {
@@ -374,49 +383,49 @@ func seriesResultCard(id, title, slug string, img media.Images, year int) templ.
 		var templ_7745c5c3_Var11 string
 		templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(title)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 146, Col: 86}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 159, Col: 86}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "</h3>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "</h3><div class=\"flex flex-wrap items-center gap-1\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		if year != 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "<span class=\"font-mono text-xs text-base-content/50\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "<span class=\"badge badge-ghost badge-sm font-mono\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var12 string
 			templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(year)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 148, Col: 63}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 162, Col: 62}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "</span> ")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "</span>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "<button class=\"btn btn-primary btn-sm rounded-field font-display uppercase tracking-wider w-full\" hx-post=\"/browse\" hx-target=\"#seasons\" hx-swap=\"innerHTML\" hx-vals=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "</div><div class=\"mt-1\"><button class=\"btn btn-primary btn-sm rounded-field font-display uppercase tracking-wider w-full\" hx-post=\"/browse\" hx-target=\"#seasons\" hx-swap=\"innerHTML\" hx-vals=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var13 string
 		templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.ResolveAttributeValue(fmt.Sprintf("{\"q\":%q}", "https://www.crunchyroll.com/series/"+id+"/"+slug))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 155, Col: 90}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 171, Col: 91}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var13)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "\">List seasons</button></div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "\">List seasons</button></div></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -518,7 +527,7 @@ func SeasonsList(seasons []media.Season, seriesID, errText string) templ.Compone
 			var templ_7745c5c3_Var16 string
 			templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%v seasons", len(seasons)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 188, Col: 98}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 205, Col: 98}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 			if templ_7745c5c3_Err != nil {
@@ -632,7 +641,7 @@ func DownloadForm(opts DownloadFormOpts, errs map[string]string) templ.Component
 		var templ_7745c5c3_Var19 string
 		templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.ResolveAttributeValue(opts.Kind)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 230, Col: 52}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 247, Col: 52}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var19)
 		if templ_7745c5c3_Err != nil {
@@ -645,7 +654,7 @@ func DownloadForm(opts DownloadFormOpts, errs map[string]string) templ.Component
 		var templ_7745c5c3_Var20 string
 		templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.ResolveAttributeValue(opts.ID)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 231, Col: 48}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 248, Col: 48}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var20)
 		if templ_7745c5c3_Err != nil {
@@ -658,7 +667,7 @@ func DownloadForm(opts DownloadFormOpts, errs map[string]string) templ.Component
 		var templ_7745c5c3_Var21 string
 		templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(opts.Summary)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 233, Col: 74}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 250, Col: 74}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 		if templ_7745c5c3_Err != nil {
@@ -756,7 +765,7 @@ func DownloadForm(opts DownloadFormOpts, errs map[string]string) templ.Component
 			var templ_7745c5c3_Var22 string
 			templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.ResolveAttributeValue(l)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 265, Col: 16}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 282, Col: 16}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var22)
 			if templ_7745c5c3_Err != nil {
@@ -779,7 +788,7 @@ func DownloadForm(opts DownloadFormOpts, errs map[string]string) templ.Component
 			var templ_7745c5c3_Var23 string
 			templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(l)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 269, Col: 52}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 286, Col: 52}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 			if templ_7745c5c3_Err != nil {
@@ -802,7 +811,7 @@ func DownloadForm(opts DownloadFormOpts, errs map[string]string) templ.Component
 			var templ_7745c5c3_Var24 string
 			templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(errs["audio"])
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 274, Col: 54}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 291, Col: 54}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
 			if templ_7745c5c3_Err != nil {
@@ -825,7 +834,7 @@ func DownloadForm(opts DownloadFormOpts, errs map[string]string) templ.Component
 			var templ_7745c5c3_Var25 string
 			templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.ResolveAttributeValue(l)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 285, Col: 16}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 302, Col: 16}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var25)
 			if templ_7745c5c3_Err != nil {
@@ -848,7 +857,7 @@ func DownloadForm(opts DownloadFormOpts, errs map[string]string) templ.Component
 			var templ_7745c5c3_Var26 string
 			templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(l)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 289, Col: 52}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 306, Col: 52}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 			if templ_7745c5c3_Err != nil {
@@ -886,7 +895,7 @@ func DownloadForm(opts DownloadFormOpts, errs map[string]string) templ.Component
 		var templ_7745c5c3_Var27 string
 		templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.ResolveAttributeValue(opts.OutputDir)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 308, Col: 27}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/pages.templ`, Line: 325, Col: 27}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var27)
 		if templ_7745c5c3_Err != nil {
