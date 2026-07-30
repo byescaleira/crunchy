@@ -1,10 +1,11 @@
 package web
 
 // Layout is the page chrome shared by every page: the DaisyUI data-theme
-// container (dark-only "appletv"), the compiled app.css and htmx.min.js (served
-// from the embedded static FS), the translucent glass top bar, the shared
-// download-options modal shell, and the multiplex-SSE + modal-event scripts.
-// Pages pass their body as children via @Layout(...) { ... }.
+// container (dark "appletv" default, light "appletv-light" via the navbar
+// sun/moon toggle), the compiled app.css and htmx.min.js (served from the
+// embedded static FS), the translucent glass top bar, the shared download-
+// options modal shell, and the multiplex-SSE + modal-event scripts. Pages pass
+// their body as children via @Layout(...) { ... }.
 templ Layout(title, active string) {
 	<!DOCTYPE html>
 	<html lang="en" data-theme="appletv">
@@ -18,6 +19,19 @@ templ Layout(title, active string) {
 			<link rel="apple-touch-icon" href="/static/favicon/apple-touch-icon.png"/>
 			<link rel="manifest" href="/static/favicon/site.webmanifest"/>
 			<meta name="theme-color" content="#0b0b0e"/>
+			<script>
+				// Apply the saved theme before the stylesheet paints so there is no
+				// flash of the wrong theme on reload. Defaults to appletv (dark) when
+				// nothing is stored or localStorage is unavailable.
+				(function () {
+					try {
+						var t = localStorage.getItem("crdl-theme");
+						if (t === "appletv" || t === "appletv-light") {
+							document.documentElement.setAttribute("data-theme", t);
+						}
+					} catch (e) {}
+				})();
+			</script>
 			<link rel="stylesheet" href="/static/app.css"/>
 			<script src="/static/htmx.min.js"></script>
 		</head>
@@ -70,7 +84,7 @@ templ Layout(title, active string) {
 						if (!group || group.querySelector('[data-baixar]')) { return; }
 						var a = document.createElement("a");
 						a.setAttribute("data-baixar", "1");
-						a.className = "btn btn-ghost btn-xs rounded-full gap-1 text-white/70 hover:text-primary";
+						a.className = "btn btn-ghost btn-xs rounded-full gap-1 text-base-content/70 hover:text-primary";
 						a.href = url;
 						a.download = file || "";
 						a.title = "Baixar o arquivo para este dispositivo";
@@ -78,12 +92,12 @@ templ Layout(title, active string) {
 						group.insertBefore(a, group.firstChild);
 					}
 					var dotColor = {
-						queued: "bg-white/25",
+						queued: "bg-base-content/25",
 						downloading: "bg-primary",
 						muxing: "bg-primary",
 						done: "bg-success",
 						error: "bg-error",
-						cancelled: "bg-white/30"
+						cancelled: "bg-base-content/30"
 					};
 					var badgeClass = {
 						queued: "badge-ghost",
@@ -103,7 +117,7 @@ templ Layout(title, active string) {
 					var CHIP_BASE = "inline-flex items-center px-1.5 py-0.5 rounded-field font-mono text-[10px] uppercase tracking-wider border transition-colors ";
 					var CHIP_DONE = "border-primary/30 text-primary/80 bg-primary/10";
 					var CHIP_ACTIVE = "border-primary text-primary-content bg-primary";
-					var CHIP_PENDING = "border-white/10 text-white/35";
+					var CHIP_PENDING = "border-base-content/10 text-base-content/35";
 					var phase = {};
 
 					function chipClass(state) {
@@ -145,7 +159,7 @@ templ Layout(title, active string) {
 						}
 						var dot = document.getElementById("job-" + id + "-dot");
 						if (dot) {
-							dot.className = "inline-block h-2 w-2 rounded-full shrink-0 " + (dotColor[status] || "bg-white/25");
+							dot.className = "inline-block h-2 w-2 rounded-full shrink-0 " + (dotColor[status] || "bg-base-content/25");
 						}
 						// Toggle the per-card control buttons for the new status:
 						//   running (queued/downloading/muxing) shows Cancel;
@@ -280,7 +294,7 @@ templ Layout(title, active string) {
 					function showToast(msg) {
 						if (!toastBox) { return; }
 						var el = document.createElement("div");
-						el.className = "alert alert-success shadow-lg atv-glass rounded-box border border-white/10 py-2 px-3 text-sm";
+						el.className = "alert alert-success shadow-lg atv-glass rounded-box border border-base-content/10 py-2 px-3 text-sm";
 						el.innerHTML =
 							'<span class="inline-flex items-center gap-2">' +
 							'<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' +
@@ -390,6 +404,41 @@ templ Layout(title, active string) {
 					}
 				})();
 			</script>
+			<script>
+				// Theme toggle: swap the dark "appletv" and light "appletv-light"
+				// DaisyUI themes on <html data-theme>, persist the choice to
+				// localStorage (read pre-paint by the head script), and keep the
+				// toggle icon + the theme-color meta in sync. The icon shows the
+				// theme you'll switch TO: sun when dark, moon when light.
+				(function () {
+					var KEY = "crdl-theme";
+					var root = document.documentElement;
+					var btn = document.getElementById("theme-toggle");
+					var meta = document.querySelector('meta[name="theme-color"]');
+					var META_DARK = "#0b0b0e";
+					var META_LIGHT = "#f5f5f7";
+					function isLight() { return root.getAttribute("data-theme") === "appletv-light"; }
+					function sync() {
+						var light = isLight();
+						if (btn) {
+							var sun = btn.querySelector('[data-theme-icon="sun"]');
+							var moon = btn.querySelector('[data-theme-icon="moon"]');
+							if (sun) { sun.classList.toggle("hidden", light); }
+							if (moon) { moon.classList.toggle("hidden", !light); }
+						}
+						if (meta) { meta.setAttribute("content", light ? META_LIGHT : META_DARK); }
+					}
+					if (btn) {
+						btn.addEventListener("click", function () {
+							var next = isLight() ? "appletv" : "appletv-light";
+							root.setAttribute("data-theme", next);
+							try { localStorage.setItem(KEY, next); } catch (e) {}
+							sync();
+						});
+					}
+					sync();
+				})();
+			</script>
 		</body>
 	</html>
 }
@@ -401,7 +450,7 @@ templ Layout(title, active string) {
 // backdrop click both work natively).
 templ DownloadModalShell() {
 	<dialog id="download-modal" class="modal">
-		<div class="modal-box atv-glass rounded-box border border-white/10 shadow-2xl">
+		<div class="modal-box atv-glass rounded-box border border-base-content/10 shadow-2xl">
 			<div
 				id="download-modal-content"
 				hx-on::after-swap="if(this.querySelector('form')){var d=document.getElementById('download-modal');if(d&&!d.open){d.showModal();}}"
@@ -416,16 +465,18 @@ templ DownloadModalShell() {
 // navbar is the floating liquid-glass capsule Apple uses for its top tab bar: a
 // centered rounded-full glass pill that floats with a margin from the top/sides
 // (not a full-width bar), a faint full border, and a soft drop shadow. The brand
-// mark + section pills sit on the left, the search field sits on the right. The
-// search is a plain GET form to /browse — a single text input submits on Enter
-// with no button, so there is no Search button to tap. Dark-only — no theme toggle.
+// mark + section pills sit on the left, the search field + theme toggle sit on
+// the right. The search is a plain GET form to /browse — a single text input
+// submits on Enter with no button, so there is no Search button to tap. The
+// theme toggle swaps the dark/light DaisyUI theme (persisted in localStorage by
+// the script at the bottom of Layout).
 templ navbar(active string) {
 	<div class="sticky top-0 z-20 px-4 pt-4">
 		<div class="container mx-auto max-w-6xl">
 			<nav class="atv-capsule flex items-center gap-3 rounded-full pl-3 pr-2 py-2">
 				<a class="flex items-center gap-2 px-1.5 shrink-0" href="/browse">
 					<img src="/static/favicon/android-chrome-192x192.png" alt="Crunchy Downloader" class="h-7 w-7 shrink-0 rounded-full object-cover"/>
-					<span class="font-semibold tracking-tight text-sm text-white/90 hidden md:inline">Crunchy Downloader</span>
+					<span class="font-semibold tracking-tight text-sm text-base-content/90 hidden md:inline">Crunchy Downloader</span>
 				</a>
 				<div class="flex items-center gap-1 shrink-0">
 					@navLink("", "Settings", "/settings", active == "settings")
@@ -433,28 +484,38 @@ templ navbar(active string) {
 					@navLink("nav-jobs", "Jobs", "/jobs", active == "jobs")
 				</div>
 				<form action="/browse" method="get" class="relative ml-auto w-full max-w-sm min-w-0">
-					@iconSearch("h-4 w-4 text-white/40 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none")
+					@iconSearch("h-4 w-4 text-base-content/40 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none")
 					<input
 						type="text"
 						name="q"
-						class="input input-bordered rounded-full w-full h-9 pl-10 pr-3 bg-base-200/60 border-white/10 text-sm"
+						class="input input-bordered rounded-full w-full h-9 pl-10 pr-3 bg-base-200/60 border-base-content/10 text-sm"
 						placeholder="Search by title or paste a series URL"
 						autocomplete="off"
 					/>
 				</form>
+				<button
+					id="theme-toggle"
+					type="button"
+					class="btn btn-ghost btn-circle btn-sm shrink-0 text-base-content/60 hover:text-base-content hover:bg-base-content/10"
+					aria-label="Toggle light/dark theme"
+					title="Toggle light/dark theme"
+				>
+					<span data-theme-icon="sun">@iconSun("h-4 w-4")</span>
+					<span data-theme-icon="moon" class="hidden">@iconMoon("h-4 w-4")</span>
+				</button>
 			</nav>
 		</div>
 	</div>
 }
 
 // navLink is a section pill inside the capsule. The active link gets a solid
-// primary fill; inactive links are quiet off-white that brighten on hover. id,
+// primary fill; inactive links are quiet muted text that brighten on hover. id,
 // when non-empty, lets JS target the pill (Browse gets "nav-browse", Jobs gets
 // "nav-jobs" so the active-jobs badge can be appended and the Browse href can be
 // rewritten to restore the last browse location); an empty id is omitted so the
 // Settings pill renders no id attribute.
 templ navLink(id, label, href string, active bool) {
-	{{ cls := "px-4 py-1.5 text-sm font-medium text-white/55 hover:text-white rounded-full hover:bg-white/10 transition-colors"
+	{{ cls := "px-4 py-1.5 text-sm font-medium text-base-content/55 hover:text-base-content rounded-full hover:bg-base-content/10 transition-colors"
 	   if active {
 	   	cls = "px-4 py-1.5 text-sm font-medium text-primary-content bg-primary rounded-full shadow-lg shadow-primary/30"
 	   }

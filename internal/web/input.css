@@ -5,17 +5,18 @@
    (zero JS) so it layers semantic component classes on top of Tailwind without
    competing with HTMX for control of the DOM.
 
-   Apple TV design language: one dark, cinematic theme ("appletv"). Near-black
-   layered surfaces, system font stack (no web fonts), generous rounded cards
-   with a subtle hover lift, a translucent glass top bar, slim progress bars,
-   and a full-bleed cinematic hero scrim. The system font keeps it native and
-   fast; every accent stays restrained — Crunchyroll orange for action/brand,
-   green/red for done/error, amber for warnings. All motion is frozen under
-   prefers-reduced-motion. */
+   Apple TV design language: a dark cinematic theme ("appletv", default) and a
+   light counterpart ("appletv-light"), switchable via the navbar sun/moon
+   toggle. Near-black / off-white layered surfaces, system font stack (no web
+   fonts), generous rounded cards with a subtle hover lift, a translucent glass
+   top bar, slim progress bars, and a full-bleed cinematic hero scrim. The
+   system font keeps it native and fast; every accent stays restrained —
+   Crunchyroll orange for action/brand, green/red for done/error, amber for
+   warnings. All motion is frozen under prefers-reduced-motion. */
 @import "tailwindcss";
 
 @plugin "daisyui" {
-  themes: appletv --default;
+  themes: appletv --default, appletv-light;
 }
 
 /* appletv — the only theme. Near-black surfaces (#08080A → #131316 → #1C1C1F),
@@ -60,6 +61,46 @@
   --border: 1px;
 }
 
+/* appletv-light — the light counterpart: off-white layered surfaces, near-black
+   content, the same Crunchyroll orange primary and Apple-system accents tuned
+   for a light canvas. Paired with the dark appletv theme via the navbar
+   sun/moon toggle (persisted in localStorage). */
+@plugin "daisyui/theme" {
+  name: "appletv-light";
+  color-scheme: light;
+
+  --color-base-100: #F5F5F7;
+  --color-base-200: #ECECEF;
+  --color-base-300: #E2E2E7;
+  --color-base-content: #1C1C1F;
+
+  --color-primary: #FF640C;
+  --color-primary-content: #FFFFFF;
+
+  --color-secondary: #5E5CE6;
+  --color-secondary-content: #FFFFFF;
+
+  --color-accent: #C97A00;
+  --color-accent-content: #FFFFFF;
+
+  --color-neutral: #D1D1D6;
+  --color-neutral-content: #1C1C1F;
+
+  --color-info: #0077BE;
+  --color-info-content: #FFFFFF;
+  --color-success: #1F9D4D;
+  --color-success-content: #FFFFFF;
+  --color-warning: #C97A00;
+  --color-warning-content: #FFFFFF;
+  --color-error: #E0381E;
+  --color-error-content: #FFFFFF;
+
+  --radius-selector: 0.875rem;
+  --radius-field: 0.75rem;
+  --radius-box: 1rem;
+  --border: 1px;
+}
+
 /* Tailwind v4 design tokens. The system font stack keeps the UI native and
    removes the Google Fonts <link> from the layout. SF Pro Display on Apple
    platforms, Inter elsewhere; mono uses SF Mono / ui-monospace. */
@@ -71,15 +112,22 @@
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "IBM Plex Mono",
     monospace;
 
-  /* Subtle scrim/edge tokens used by the hero + glass top bar. */
+  /* Subtle scrim/edge tokens used by the hero + glass top bar. The glass +
+     border tokens derive from the DaisyUI base tokens via color-mix so they
+     adapt to whichever theme is active (dark appletv / light appletv-light)
+     without per-theme overrides — custom properties resolve lazily at use time.
+     --atv-scrim stays a dark gradient because it is always laid over a cinematic
+     hero image with white text. */
   --atv-scrim: linear-gradient(
     to top,
     rgba(8, 8, 10, 0.92) 0%,
     rgba(8, 8, 10, 0.55) 45%,
     rgba(8, 8, 10, 0.10) 100%
   );
-  --atv-glass: rgba(20, 20, 22, 0.72);
-  --atv-border: rgba(255, 255, 255, 0.08);
+  --atv-glass: color-mix(in srgb, var(--color-base-100) 72%, transparent);
+  --atv-border: color-mix(in srgb, var(--color-base-content) 10%, transparent);
+  --atv-glass-hi: rgba(255, 255, 255, 0.12);
+  --atv-glass-circle-bg: color-mix(in srgb, var(--color-base-100) 45%, transparent);
 
   --ease-lift: cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -120,7 +168,7 @@
   .atv-lift:hover {
     transform: translateY(-2px);
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.45), 0 16px 40px rgba(0, 0, 0, 0.4);
-    border-color: rgba(255, 255, 255, 0.16);
+    border-color: color-mix(in srgb, var(--color-base-content) 20%, transparent);
   }
 
   .atv-hero-scrim {
@@ -142,7 +190,26 @@
     backdrop-filter: saturate(180%) blur(24px);
     -webkit-backdrop-filter: saturate(180%) blur(24px);
     border: 1px solid var(--atv-border);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(255, 255, 255, 0.06) inset;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 1px 0 var(--atv-glass-hi) inset;
+  }
+
+  /* atv-glass-circle is a circular liquid-glass control — the episode-card
+     download overlay that floats over the thumbnail like Apple's liquid-glass
+     buttons: a translucent backdrop-blur disc with a bright rim, an inset
+     top highlight, and a soft drop shadow. Hover fills it with the primary
+     accent. Size + centering are set by the caller's utilities. */
+  .atv-glass-circle {
+    background-color: var(--atv-glass-circle-bg);
+    backdrop-filter: saturate(180%) blur(16px);
+    -webkit-backdrop-filter: saturate(180%) blur(16px);
+    border: 1px solid var(--atv-glass-hi);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45), inset 0 1px 0 var(--atv-glass-hi);
+    transition: background-color 0.2s var(--ease-lift), border-color 0.2s var(--ease-lift), transform 0.2s var(--ease-lift);
+  }
+  .atv-glass-circle:hover {
+    background-color: var(--color-primary);
+    border-color: transparent;
+    transform: scale(1.06);
   }
 
   /* Slim progress track: a 4px rounded rail with a primary fill. Works for the
@@ -150,7 +217,7 @@
   .atv-bar {
     height: 4px;
     border-radius: 9999px;
-    background-color: rgba(255, 255, 255, 0.1);
+    background-color: color-mix(in srgb, var(--color-base-content) 12%, transparent);
     overflow: hidden;
   }
   .atv-bar::-webkit-progress-bar {

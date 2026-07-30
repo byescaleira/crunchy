@@ -10,7 +10,7 @@ import (
 // emptyState is the quiet centered hint for empty panels (no jobs / no episodes /
 // no results). No mascot — Apple TV keeps empty states minimal and textual.
 templ emptyState(msg string) {
-	<div class="flex flex-col items-center gap-2 py-10 text-white/35">
+	<div class="flex flex-col items-center gap-2 py-10 text-base-content/35">
 		<p class="text-sm text-center max-w-xs">{ msg }</p>
 	</div>
 }
@@ -26,7 +26,7 @@ templ SettingsPage(saved bool, errText string, maxConcurrent int) {
 			@eyebrow("Settings")
 			<div class="atv-card rounded-box p-6 flex flex-col gap-4">
 				<h2 class="font-display text-xl font-semibold">etp_rt token</h2>
-				<p class="text-sm text-white/60">
+				<p class="text-sm text-base-content/60">
 					Paste your <code class="font-mono text-primary">etp_rt</code> cookie. It stays on this machine
 					(127.0.0.1) and is never logged.
 				</p>
@@ -39,17 +39,17 @@ templ SettingsPage(saved bool, errText string, maxConcurrent int) {
 					@iconSearch("h-4 w-4")
 					<span>Find token in my browser</span>
 				</button>
-				<p class="text-xs text-white/40">
+				<p class="text-xs text-base-content/40">
 					Scans Chrome, Brave, Edge, Arc, Firefox, and Safari for the etp_rt cookie. Log in to
 					crunchyroll.com in your browser first, then click Find — it's also the refresh.
 				</p>
 				<form hx-post="/settings" hx-target="#settings-result" class="flex flex-col gap-3">
 					<label class="form-control">
-						<span class="label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45">etp_rt cookie</span>
+						<span class="label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-base-content/45">etp_rt cookie</span>
 						<input
 							type="password"
 							name="etpRt"
-							class="input input-bordered rounded-field font-mono bg-base-200 border-white/10"
+							class="input input-bordered rounded-field font-mono bg-base-200 border-base-content/10"
 							placeholder="etp_rt value"
 						/>
 					</label>
@@ -66,21 +66,21 @@ templ SettingsPage(saved bool, errText string, maxConcurrent int) {
 
 			<div class="atv-card rounded-box p-6 flex flex-col gap-4">
 				<h2 class="font-display text-xl font-semibold">Downloads</h2>
-				<p class="text-sm text-white/60">
+				<p class="text-sm text-base-content/60">
 					How many episodes to download at once. A whole season fans out into one job per
 					episode; this caps how many run in parallel. Higher is faster but risks
 					rate-limiting. Takes effect after a server restart.
 				</p>
 				<form hx-post="/settings/downloads" hx-target="#downloads-result" class="flex items-end gap-3">
 					<label class="form-control">
-						<span class="label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45">Concurrent downloads</span>
+						<span class="label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-base-content/45">Concurrent downloads</span>
 						<input
 							type="number"
 							name="maxConcurrent"
 							min="1"
 							max="8"
 							value={ fmt.Sprintf("%d", maxConcurrent) }
-							class="input input-bordered rounded-field font-mono bg-base-200 border-white/10 w-24"
+							class="input input-bordered rounded-field font-mono bg-base-200 border-base-content/10 w-24"
 						/>
 					</label>
 					<button class="btn btn-primary rounded-full">Save</button>
@@ -107,7 +107,7 @@ templ BrowsePage(view BrowseView) {
 			if view.Mode == BrowseSearch {
 				@eyebrowInline("Search results")
 				if len(view.Hits) == 0 && view.ErrText == "" {
-					<p class="text-sm text-white/40 font-mono mt-3">{ fmt.Sprintf("No results for %q.", view.Query) }</p>
+					<p class="text-sm text-base-content/40 font-mono mt-3">{ fmt.Sprintf("No results for %q.", view.Query) }</p>
 				}
 				if len(view.Hits) > 0 {
 					<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-5 mt-4">
@@ -120,7 +120,7 @@ templ BrowsePage(view BrowseView) {
 			if view.Mode == BrowseCategory {
 				@eyebrowInline(media.GenreLabel(view.ActiveCat))
 				if len(view.Panels) == 0 && view.ErrText == "" {
-					<p class="text-sm text-white/40 font-mono mt-3">No series in this category right now.</p>
+					<p class="text-sm text-base-content/40 font-mono mt-3">No series in this category right now.</p>
 				}
 				if len(view.Panels) > 0 {
 					<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-5 mt-4">
@@ -133,7 +133,7 @@ templ BrowsePage(view BrowseView) {
 			if view.Mode == BrowsePopular {
 				@eyebrowInline("Popular now")
 				if len(view.Panels) == 0 && view.ErrText == "" {
-					<p class="text-sm text-white/40 font-mono mt-3">No popular anime available right now.</p>
+					<p class="text-sm text-base-content/40 font-mono mt-3">No popular anime available right now.</p>
 				}
 				if len(view.Panels) > 0 {
 					<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-5 mt-4">
@@ -155,8 +155,8 @@ templ BrowsePage(view BrowseView) {
 templ SeriesDetailPage(series media.Series, seriesID string, seasons []media.Season, errText string) {
 	@Layout(seriesTitleOrBrowse(series), "browse") {
 		<div class="flex flex-col gap-5">
-			<a class="inline-flex items-center gap-1.5 text-sm text-white/55 hover:text-white transition-colors" href="/browse">
-				@iconPlay("h-3.5 w-3.5 rotate-180 text-white/55")
+			<a class="inline-flex items-center gap-1.5 text-sm text-base-content/55 hover:text-base-content transition-colors" href="/browse">
+				@iconPlay("h-3.5 w-3.5 rotate-180 text-base-content/55")
 				<span>Browse</span>
 			</a>
 			@seriesHero(series, seriesID)
@@ -209,7 +209,7 @@ templ seriesResultCard(id, title, slug string, img media.Images, year int) {
 			/>
 		} else {
 			<div class="absolute inset-0 bg-base-300 flex items-center justify-center">
-				<span class="font-mono text-xs text-white/25">no art</span>
+				<span class="font-mono text-xs text-base-content/25">no art</span>
 			</div>
 		}
 		<div class="absolute inset-0 atv-hero-scrim pointer-events-none"></div>
@@ -263,7 +263,7 @@ templ categoryPill(label, href string, active bool) {
 	if active {
 		<a class="px-3.5 py-1.5 text-sm font-medium text-primary-content bg-primary rounded-full shadow-lg shadow-primary/30" href={ href }>{ label }</a>
 	} else {
-		<a class="px-3.5 py-1.5 text-sm font-medium text-white/55 hover:text-white rounded-full bg-white/5 hover:bg-white/10 border border-white/10 transition-colors" href={ href }>{ label }</a>
+		<a class="px-3.5 py-1.5 text-sm font-medium text-base-content/55 hover:text-base-content rounded-full bg-base-content/5 hover:bg-base-content/10 border border-base-content/10 transition-colors" href={ href }>{ label }</a>
 	}
 }
 
@@ -275,13 +275,13 @@ templ SeasonsList(seasons []media.Season, seriesID, errText string) {
 		@Alert("error", errText)
 	}
 	if len(seasons) == 0 && errText == "" {
-		<p class="text-sm text-white/40 font-mono">No seasons yet — paste a series URL above.</p>
+		<p class="text-sm text-base-content/40 font-mono">No seasons yet — paste a series URL above.</p>
 	}
 	if len(seasons) > 0 {
 		<div class="atv-card rounded-box">
 			<div class="flex items-center justify-between px-5 pt-4 pb-2">
 				@eyebrowInline("Seasons")
-				<span class="font-mono text-xs text-white/40">{ fmt.Sprintf("%v seasons", len(seasons)) }</span>
+				<span class="font-mono text-xs text-base-content/40">{ fmt.Sprintf("%v seasons", len(seasons)) }</span>
 			</div>
 			<div class="px-5 pb-3">
 				for _, s := range seasons {
@@ -300,10 +300,10 @@ templ EpisodesTable(episodes []media.SeasonEpisode, errText string) {
 		@Alert("error", errText)
 	}
 	if len(episodes) == 0 && errText == "" {
-		<p class="text-sm text-white/40 font-mono">No episodes found.</p>
+		<p class="text-sm text-base-content/40 font-mono">No episodes found.</p>
 	}
 	if len(episodes) > 0 {
-		<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+		<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
 			for _, ep := range episodes {
 				@episodeCard(ep)
 			}
@@ -341,8 +341,8 @@ templ DownloadForm(opts DownloadFormOpts, errs map[string]string) {
 		}
 		<div class="grid grid-cols-2 gap-3">
 			<label class="form-control">
-				<span class="label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45">Video quality</span>
-				<select name="videoQuality" class="select select-bordered rounded-field bg-base-200 border-white/10">
+				<span class="label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-base-content/45">Video quality</span>
+				<select name="videoQuality" class="select select-bordered rounded-field bg-base-200 border-base-content/10">
 					<option value="1080p" selected?={ opts.VideoQuality == "1080p" }>1080p</option>
 					<option value="720p" selected?={ opts.VideoQuality == "720p" }>720p</option>
 					<option value="480p" selected?={ opts.VideoQuality == "480p" }>480p</option>
@@ -350,8 +350,8 @@ templ DownloadForm(opts DownloadFormOpts, errs map[string]string) {
 				</select>
 			</label>
 			<label class="form-control">
-				<span class="label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45">Audio quality</span>
-				<select name="audioQuality" class="select select-bordered rounded-field bg-base-200 border-white/10">
+				<span class="label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-base-content/45">Audio quality</span>
+				<select name="audioQuality" class="select select-bordered rounded-field bg-base-200 border-base-content/10">
 					<option value="192k" selected?={ opts.AudioQuality == "192k" }>192k</option>
 					<option value="128k" selected?={ opts.AudioQuality == "128k" }>128k</option>
 					<option value="96k" selected?={ opts.AudioQuality == "96k" }>96k</option>
@@ -359,10 +359,10 @@ templ DownloadForm(opts DownloadFormOpts, errs map[string]string) {
 			</label>
 		</div>
 		<div class="form-control">
-			<span class="label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45">Audio languages</span>
+			<span class="label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-base-content/45">Audio languages</span>
 			<div class="flex flex-wrap gap-1.5">
 				for _, l := range commonAudioLocales {
-					<label class="label cursor-pointer gap-2 rounded-field px-2.5 py-1.5 bg-base-200 border border-white/10">
+					<label class="label cursor-pointer gap-2 rounded-field px-2.5 py-1.5 bg-base-200 border border-base-content/10">
 						<input
 							type="checkbox"
 							name="audioLangs"
@@ -379,10 +379,10 @@ templ DownloadForm(opts DownloadFormOpts, errs map[string]string) {
 			}
 		</div>
 		<div class="form-control">
-			<span class="label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45">Subtitle languages</span>
+			<span class="label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-base-content/45">Subtitle languages</span>
 			<div class="flex flex-wrap gap-1.5">
 				for _, l := range commonSubLocales {
-					<label class="label cursor-pointer gap-2 rounded-field px-2.5 py-1.5 bg-base-200 border border-white/10">
+					<label class="label cursor-pointer gap-2 rounded-field px-2.5 py-1.5 bg-base-200 border border-base-content/10">
 						<input
 							type="checkbox"
 							name="subsLangs"
@@ -397,18 +397,18 @@ templ DownloadForm(opts DownloadFormOpts, errs map[string]string) {
 		</div>
 		<div class="grid grid-cols-2 gap-3">
 			<label class="form-control">
-				<span class="label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45">File format</span>
-				<select name="format" class="select select-bordered rounded-field bg-base-200 border-white/10">
+				<span class="label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-base-content/45">File format</span>
+				<select name="format" class="select select-bordered rounded-field bg-base-200 border-base-content/10">
 					<option value="mkv" selected?={ opts.Format == "mkv" }>.mkv</option>
 					<option value="mp4" selected?={ opts.Format == "mp4" }>.mp4</option>
 				</select>
 			</label>
 			<label class="form-control">
-				<span class="label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45">Output directory</span>
+				<span class="label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-base-content/45">Output directory</span>
 				<input
 					type="text"
 					name="outputDir"
-					class="input input-bordered rounded-field font-mono bg-base-200 border-white/10"
+					class="input input-bordered rounded-field font-mono bg-base-200 border-base-content/10"
 					value={ opts.OutputDir }
 					placeholder="."
 				/>
@@ -472,8 +472,8 @@ templ JobsListSections(js []*jobs.Job) {
 	}
 	for _, sec := range jobSections(js) {
 		<div class="flex items-center gap-2 pt-3 first:pt-1">
-			<span class="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45">{ sec.Title }</span>
-			<span class="font-mono text-[11px] text-white/30">{ fmt.Sprintf("%d", len(sec.Jobs)) }</span>
+			<span class="text-[11px] font-semibold uppercase tracking-[0.14em] text-base-content/45">{ sec.Title }</span>
+			<span class="font-mono text-[11px] text-base-content/30">{ fmt.Sprintf("%d", len(sec.Jobs)) }</span>
 		</div>
 		for _, j := range sec.Jobs {
 			@jobCard(j)
@@ -494,7 +494,7 @@ templ JobsQueue(js []*jobs.Job) {
 	for _, row := range jobsRows(active) {
 		if row.Group != "" {
 			<div class="flex items-center gap-2 pt-3 first:pt-1">
-				<span class="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45">{ row.Group }</span>
+				<span class="text-[11px] font-semibold uppercase tracking-[0.14em] text-base-content/45">{ row.Group }</span>
 			</div>
 		}
 		if row.Job != nil {

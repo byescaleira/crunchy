@@ -11,8 +11,8 @@ import (
 // is one of error/success/warning/info. Exported so the server can render it
 // standalone.
 templ Alert(kind, msg string) {
-	<div class={ "alert rounded-box border border-white/10 " + alertClass(kind) }>
-		<span class="text-sm text-white/90">{ msg }</span>
+	<div class={ "alert rounded-box border border-base-content/10 " + alertClass(kind) }>
+		<span class="text-sm text-base-content/90">{ msg }</span>
 	</div>
 }
 
@@ -20,14 +20,14 @@ templ Alert(kind, msg string) {
 // Marks a section off without a heavy border.
 templ eyebrow(label string) {
 	<div class="flex items-center gap-2">
-		<span class="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45">{ label }</span>
+		<span class="text-[11px] font-semibold uppercase tracking-[0.14em] text-base-content/45">{ label }</span>
 	</div>
 }
 
 // eyebrowInline is the same eyebrow label without the block treatment, for use
 // inside flex rows (e.g. a card header next to a count).
 templ eyebrowInline(label string) {
-	<span class="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45">{ label }</span>
+	<span class="text-[11px] font-semibold uppercase tracking-[0.14em] text-base-content/45">{ label }</span>
 }
 
 // DownloadButton opens the download-options modal for a granularity (episode /
@@ -94,23 +94,23 @@ templ seriesHero(series media.Series, seriesID string) {
 // mono season number, the season title, episode count, audio-locale chips, and
 // the View / Download-season actions.
 templ seasonCard(s media.Season) {
-	<div class="flex items-center gap-3 py-3 border-b border-white/8 last:border-b-0">
-		<span class="font-mono text-sm text-white/45 w-10 shrink-0">S{ s.SeasonNumber }</span>
+	<div class="flex items-center gap-3 py-3 border-b border-base-content/8 last:border-b-0">
+		<span class="font-mono text-sm text-base-content/45 w-10 shrink-0">S{ s.SeasonNumber }</span>
 		<div class="min-w-0 flex-1">
 			<div class="flex items-baseline gap-2 flex-wrap">
 				if s.Title != "" {
-					<span class="font-medium text-white/90 truncate">{ s.Title }</span>
+					<span class="font-medium text-base-content/90 truncate">{ s.Title }</span>
 				} else {
-					<span class="font-medium text-white/90">Season { s.SeasonNumber }</span>
+					<span class="font-medium text-base-content/90">Season { s.SeasonNumber }</span>
 				}
 				if s.NumberOfEpisodes > 0 {
-					<span class="font-mono text-xs text-white/40">{ s.NumberOfEpisodes } ep</span>
+					<span class="font-mono text-xs text-base-content/40">{ s.NumberOfEpisodes } ep</span>
 				}
 			</div>
 			if len(s.AudioLocales) > 0 {
 				<div class="flex flex-wrap gap-1 mt-1">
 					for _, l := range s.AudioLocales {
-						<span class="px-1.5 py-0.5 rounded-full text-[10px] font-mono text-white/55 bg-white/5 border border-white/10">{ l }</span>
+						<span class="px-1.5 py-0.5 rounded-full text-[10px] font-mono text-base-content/55 bg-base-content/5 border border-base-content/10">{ l }</span>
 					}
 				</div>
 			}
@@ -130,37 +130,56 @@ templ seasonCard(s media.Season) {
 	</div>
 }
 
-// episodeCard renders one episode as a media-forward Apple TV card: a thumbnail
-// on top, then the mono episode number + duration, title, meta, and the per-row
-// Download button. Replaces the old checkbox table row.
+// episodeCard renders one episode as a Crunchyroll-style vertical card: a 16:9
+// thumbnail with a centered Download button (the Crunchyroll play overlay, but a
+// down-arrow), then a body with the series-title eyebrow, an "E{N} - Title"
+// heading, and a meta line pairing the air date (calendar glyph, left) with the
+// duration (right). The whole thumbnail is the download tap target. Laid out as
+// a responsive grid (see EpisodesTable).
 templ episodeCard(ep media.SeasonEpisode) {
-	<div class="atv-card atv-lift rounded-box overflow-hidden">
-		if img, ok := media.BestImage(ep.Images.Thumbnail); ok && img.Source != "" {
-			<img src={ img.Source } alt={ ep.Title } class="w-full aspect-video object-cover" loading="lazy"/>
-		} else {
-			<div class="w-full aspect-video bg-base-300/70 flex items-center justify-center">
-				<span class="font-mono text-2xl text-white/25">E{ ep.EpisodeNumber }</span>
-			</div>
-		}
-		<div class="p-3 flex flex-col gap-1.5">
-			<div class="flex items-center justify-between gap-2">
-				<span class="font-mono text-xs text-primary">E{ ep.EpisodeNumber }</span>
-				if d := formatDuration(ep.DurationMS); d != "" {
-					<span class="font-mono text-xs text-white/40">{ d }</span>
-				}
-			</div>
-			<h3 class="font-display text-sm leading-tight truncate text-white/90" title={ ep.Title }>{ ep.Title }</h3>
-			<div class="flex flex-wrap items-center gap-1.5">
+	<div class="atv-card atv-lift rounded-box overflow-hidden group flex flex-col">
+		<div class="relative">
+			if img, ok := media.BestImage(ep.Images.Thumbnail); ok && img.Source != "" {
+				<img src={ img.Source } alt={ ep.Title } class="w-full aspect-video object-cover" loading="lazy"/>
+			} else {
+				<div class="w-full aspect-video bg-base-300/70 flex items-center justify-center">
+					<span class="font-mono text-2xl text-base-content/25">E{ ep.EpisodeNumber }</span>
+				</div>
+			}
+			<button
+				class="absolute inset-0 grid place-items-center bg-black/0 group-hover:bg-black/25 transition-colors"
+				aria-label={ "Download " + ep.Title }
+				title="Download"
+				hx-get={ "/downloads/new?kind=episode&id=" + ep.ID }
+				hx-target="#download-modal-content"
+				hx-swap="innerHTML"
+			>
+				<span class="atv-glass-circle grid place-items-center w-11 h-11 rounded-full text-base-content">
+					@iconDownload("h-5 w-5")
+				</span>
+			</button>
+		</div>
+		<div class="p-3 flex flex-col gap-1.5 flex-1">
+			if ep.SeriesTitle != "" {
+				<small class="text-[11px] font-semibold uppercase tracking-wide text-base-content/45 truncate">{ ep.SeriesTitle }</small>
+			}
+			<h3 class="font-display text-sm font-medium leading-tight line-clamp-2 text-base-content/90" title={ ep.Title }>
+				{ fmt.Sprintf("E%d - %s", ep.EpisodeNumber, ep.Title) }
+			</h3>
+			<div class="flex items-center gap-2">
 				if d := airDate(ep.EpisodeAirDate); d != "" {
-					<span class="font-mono text-xs text-white/40">{ d }</span>
+					<span class="flex items-center gap-1 text-xs text-base-content/40">
+						@iconCalendar("h-3.5 w-3.5")
+						{ d }
+					</span>
 				}
-				if ep.IsPremiumOnly {
-					<span class="badge badge-warning badge-sm font-mono">Premium</span>
+				if dur := formatDurationShort(ep.DurationMS); dur != "" {
+					<span class="font-mono text-xs text-base-content/40 ml-auto">{ dur }</span>
 				}
 			</div>
-			<div class="mt-1.5">
-				@DownloadButton("episode", ep.ID)
-			</div>
+			if ep.Description != "" {
+				<p class="text-xs text-base-content/50 line-clamp-2 leading-snug">{ ep.Description }</p>
+			}
 		</div>
 	</div>
 }
@@ -200,7 +219,7 @@ templ jobProgress(j *jobs.Job) {
 	}}
 	<div class="flex items-center gap-2.5">
 		<progress class="progress atv-bar flex-1" value={ pct } max="100" id={ "job-" + j.ID + "-bar" }></progress>
-		<span class="font-mono text-xs text-white/45 tabular-nums w-10 text-right" id={ "job-" + j.ID + "-pct" }>{ fmt.Sprintf("%d%%", pct) }</span>
+		<span class="font-mono text-xs text-base-content/45 tabular-nums w-10 text-right" id={ "job-" + j.ID + "-pct" }>{ fmt.Sprintf("%d%%", pct) }</span>
 	</div>
 	<div class="flex items-center gap-1.5 mt-2">
 		for _, key := range phaseOrder {
@@ -235,7 +254,7 @@ templ jobControls(j *jobs.Job) {
 	}}
 	<div class="flex items-center gap-1.5" data-controls="running" style={ runningStyle }>
 		<button
-			class="btn btn-ghost btn-xs rounded-full gap-1 text-white/70 hover:text-error"
+			class="btn btn-ghost btn-xs rounded-full gap-1 text-base-content/70 hover:text-error"
 			hx-post={ "/jobs/" + j.ID + "/cancel" }
 			hx-swap="none"
 			title="Cancel this download"
@@ -247,7 +266,7 @@ templ jobControls(j *jobs.Job) {
 	<div class="flex items-center gap-1.5" data-controls="terminal" style={ terminalStyle }>
 		if j.Status() == jobs.StatusDone && j.OutputName() != "" {
 			<a
-				class="btn btn-ghost btn-xs rounded-full gap-1 text-white/70 hover:text-primary"
+				class="btn btn-ghost btn-xs rounded-full gap-1 text-base-content/70 hover:text-primary"
 				href={ "/jobs/" + j.ID + "/file" }
 				download={ j.OutputName() }
 				title="Baixar o arquivo para este dispositivo"
@@ -257,7 +276,7 @@ templ jobControls(j *jobs.Job) {
 			</a>
 		}
 		<button
-			class="btn btn-ghost btn-xs rounded-full gap-1 text-white/70 hover:text-white"
+			class="btn btn-ghost btn-xs rounded-full gap-1 text-base-content/70 hover:text-base-content"
 			hx-post={ "/jobs/" + j.ID + "/restart" }
 			hx-swap="none"
 			title="Restart this episode"
@@ -266,7 +285,7 @@ templ jobControls(j *jobs.Job) {
 			<span>Restart</span>
 		</button>
 		<button
-			class="btn btn-ghost btn-xs rounded-full gap-1 text-white/70 hover:text-error"
+			class="btn btn-ghost btn-xs rounded-full gap-1 text-base-content/70 hover:text-error"
 			hx-post={ "/jobs/" + j.ID + "/delete" }
 			hx-swap="none"
 			title="Remove this card"
@@ -284,13 +303,13 @@ templ jobControls(j *jobs.Job) {
 // multiplexed /jobs/events script, and the dot/status/progress/phase element ids
 // let that script update them live.
 templ jobCard(j *jobs.Job) {
-	<div class="flex flex-col gap-1.5 py-3 border-b border-white/8 last:border-b-0" id={ "job-" + j.ID } data-job-sse={ j.ID }>
+	<div class="flex flex-col gap-1.5 py-3 border-b border-base-content/8 last:border-b-0" id={ "job-" + j.ID } data-job-sse={ j.ID }>
 		<div class="flex items-start gap-3">
 			if j.ImageURL != "" {
 				<img src={ j.ImageURL } alt={ jobDisplayTitle(j) } class="w-28 aspect-video object-cover rounded-lg shrink-0 bg-base-300/40" loading="lazy"/>
 			} else {
 				<div class="w-28 aspect-video bg-base-300/60 flex items-center justify-center shrink-0 rounded-lg">
-					<span class="font-mono text-sm text-white/25">E{ j.EpisodeNumber }</span>
+					<span class="font-mono text-sm text-base-content/25">E{ j.EpisodeNumber }</span>
 				</div>
 			}
 			<div class="min-w-0 flex-1 flex flex-col gap-1">
@@ -300,11 +319,11 @@ templ jobCard(j *jobs.Job) {
 						class={ "inline-block h-2 w-2 rounded-full shrink-0 " + statusDotClass(j.Status()) }
 					></span>
 					if eb := jobEyebrow(j); eb != "" {
-						<span class="font-mono text-[10px] uppercase tracking-wider text-white/40 truncate">{ eb }</span>
+						<span class="font-mono text-[10px] uppercase tracking-wider text-base-content/40 truncate">{ eb }</span>
 					}
 					<span class={ "badge " + statusBadgeClass(string(j.Status())) + " badge-sm font-mono shrink-0 ml-auto" } id={ "job-" + j.ID + "-status" }>{ string(j.Status()) }</span>
 				</div>
-				<h3 class="font-display text-sm leading-tight truncate text-white/90" title={ j.Label }>{ jobDisplayTitle(j) }</h3>
+				<h3 class="font-display text-sm leading-tight truncate text-base-content/90" title={ j.Label }>{ jobDisplayTitle(j) }</h3>
 				@jobControls(j)
 			</div>
 		</div>
@@ -352,7 +371,7 @@ func statusDotClass(s jobs.Status) string {
 	case "error":
 		return "bg-error"
 	default:
-		return "bg-white/25"
+		return "bg-base-content/25"
 	}
 }
 
@@ -410,7 +429,7 @@ func phaseChipClass(status, current, key string) string {
 	const base = "inline-flex items-center px-1.5 py-0.5 rounded-full font-mono text-[10px] uppercase tracking-wider border transition-colors "
 	const done = "border-primary/30 text-primary/80 bg-primary/10"
 	const active = "border-primary text-primary-content bg-primary"
-	const pending = "border-white/10 text-white/35"
+	const pending = "border-base-content/10 text-base-content/35"
 
 	ki := phaseIndex(key)
 	if ki < 0 {

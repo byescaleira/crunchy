@@ -38,7 +38,7 @@ func emptyState(msg string) templ.Component {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"flex flex-col items-center gap-2 py-10 text-white/35\"><p class=\"text-sm text-center max-w-xs\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"flex flex-col items-center gap-2 py-10 text-base-content/35\"><p class=\"text-sm text-center max-w-xs\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -105,7 +105,7 @@ func SettingsPage(saved bool, errText string, maxConcurrent int) templ.Component
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "<div class=\"atv-card rounded-box p-6 flex flex-col gap-4\"><h2 class=\"font-display text-xl font-semibold\">etp_rt token</h2><p class=\"text-sm text-white/60\">Paste your <code class=\"font-mono text-primary\">etp_rt</code> cookie. It stays on this machine (127.0.0.1) and is never logged.</p><button class=\"btn btn-outline rounded-full gap-1.5 self-start\" hx-post=\"/settings/find-cookies\" hx-target=\"#settings-result\" hx-disabled-elt=\"this\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "<div class=\"atv-card rounded-box p-6 flex flex-col gap-4\"><h2 class=\"font-display text-xl font-semibold\">etp_rt token</h2><p class=\"text-sm text-base-content/60\">Paste your <code class=\"font-mono text-primary\">etp_rt</code> cookie. It stays on this machine (127.0.0.1) and is never logged.</p><button class=\"btn btn-outline rounded-full gap-1.5 self-start\" hx-post=\"/settings/find-cookies\" hx-target=\"#settings-result\" hx-disabled-elt=\"this\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -113,7 +113,7 @@ func SettingsPage(saved bool, errText string, maxConcurrent int) templ.Component
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "<span>Find token in my browser</span></button><p class=\"text-xs text-white/40\">Scans Chrome, Brave, Edge, Arc, Firefox, and Safari for the etp_rt cookie. Log in to crunchyroll.com in your browser first, then click Find — it's also the refresh.</p><form hx-post=\"/settings\" hx-target=\"#settings-result\" class=\"flex flex-col gap-3\"><label class=\"form-control\"><span class=\"label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45\">etp_rt cookie</span> <input type=\"password\" name=\"etpRt\" class=\"input input-bordered rounded-field font-mono bg-base-200 border-white/10\" placeholder=\"etp_rt value\"></label> <button class=\"btn btn-primary rounded-full self-start\">Save &amp; test token</button></form><div id=\"settings-result\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "<span>Find token in my browser</span></button><p class=\"text-xs text-base-content/40\">Scans Chrome, Brave, Edge, Arc, Firefox, and Safari for the etp_rt cookie. Log in to crunchyroll.com in your browser first, then click Find — it's also the refresh.</p><form hx-post=\"/settings\" hx-target=\"#settings-result\" class=\"flex flex-col gap-3\"><label class=\"form-control\"><span class=\"label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-base-content/45\">etp_rt cookie</span> <input type=\"password\" name=\"etpRt\" class=\"input input-bordered rounded-field font-mono bg-base-200 border-base-content/10\" placeholder=\"etp_rt value\"></label> <button class=\"btn btn-primary rounded-full self-start\">Save &amp; test token</button></form><div id=\"settings-result\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -128,7 +128,7 @@ func SettingsPage(saved bool, errText string, maxConcurrent int) templ.Component
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "</div></div><div class=\"atv-card rounded-box p-6 flex flex-col gap-4\"><h2 class=\"font-display text-xl font-semibold\">Downloads</h2><p class=\"text-sm text-white/60\">How many episodes to download at once. A whole season fans out into one job per episode; this caps how many run in parallel. Higher is faster but risks rate-limiting. Takes effect after a server restart.</p><form hx-post=\"/settings/downloads\" hx-target=\"#downloads-result\" class=\"flex items-end gap-3\"><label class=\"form-control\"><span class=\"label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45\">Concurrent downloads</span> <input type=\"number\" name=\"maxConcurrent\" min=\"1\" max=\"8\" value=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "</div></div><div class=\"atv-card rounded-box p-6 flex flex-col gap-4\"><h2 class=\"font-display text-xl font-semibold\">Downloads</h2><p class=\"text-sm text-base-content/60\">How many episodes to download at once. A whole season fans out into one job per episode; this caps how many run in parallel. Higher is faster but risks rate-limiting. Takes effect after a server restart.</p><form hx-post=\"/settings/downloads\" hx-target=\"#downloads-result\" class=\"flex items-end gap-3\"><label class=\"form-control\"><span class=\"label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-base-content/45\">Concurrent downloads</span> <input type=\"number\" name=\"maxConcurrent\" min=\"1\" max=\"8\" value=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -141,7 +141,7 @@ func SettingsPage(saved bool, errText string, maxConcurrent int) templ.Component
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "\" class=\"input input-bordered rounded-field font-mono bg-base-200 border-white/10 w-24\"></label> <button class=\"btn btn-primary rounded-full\">Save</button></form><div id=\"downloads-result\"></div></div></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "\" class=\"input input-bordered rounded-field font-mono bg-base-200 border-base-content/10 w-24\"></label> <button class=\"btn btn-primary rounded-full\">Save</button></form><div id=\"downloads-result\"></div></div></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -221,14 +221,14 @@ func BrowsePage(view BrowseView) templ.Component {
 					return templ_7745c5c3_Err
 				}
 				if len(view.Hits) == 0 && view.ErrText == "" {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "<p class=\"text-sm text-white/40 font-mono mt-3\">")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "<p class=\"text-sm text-base-content/40 font-mono mt-3\">")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 					var templ_7745c5c3_Var8 string
 					templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("No results for %q.", view.Query))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages.templ`, Line: 110, Col: 100}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages.templ`, Line: 110, Col: 107}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 					if templ_7745c5c3_Err != nil {
@@ -270,7 +270,7 @@ func BrowsePage(view BrowseView) templ.Component {
 					return templ_7745c5c3_Err
 				}
 				if len(view.Panels) == 0 && view.ErrText == "" {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "<p class=\"text-sm text-white/40 font-mono mt-3\">No series in this category right now.</p>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "<p class=\"text-sm text-base-content/40 font-mono mt-3\">No series in this category right now.</p>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
@@ -306,7 +306,7 @@ func BrowsePage(view BrowseView) templ.Component {
 					return templ_7745c5c3_Err
 				}
 				if len(view.Panels) == 0 && view.ErrText == "" {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "<p class=\"text-sm text-white/40 font-mono mt-3\">No popular anime available right now.</p>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "<p class=\"text-sm text-base-content/40 font-mono mt-3\">No popular anime available right now.</p>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
@@ -384,11 +384,11 @@ func SeriesDetailPage(series media.Series, seriesID string, seasons []media.Seas
 				}()
 			}
 			ctx = templ.InitializeContext(ctx)
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "<div class=\"flex flex-col gap-5\"><a class=\"inline-flex items-center gap-1.5 text-sm text-white/55 hover:text-white transition-colors\" href=\"/browse\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "<div class=\"flex flex-col gap-5\"><a class=\"inline-flex items-center gap-1.5 text-sm text-base-content/55 hover:text-base-content transition-colors\" href=\"/browse\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = iconPlay("h-3.5 w-3.5 rotate-180 text-white/55").Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = iconPlay("h-3.5 w-3.5 rotate-180 text-base-content/55").Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -551,7 +551,7 @@ func seriesResultCard(id, title, slug string, img media.Images, year int) templ.
 				return templ_7745c5c3_Err
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 38, "<div class=\"absolute inset-0 bg-base-300 flex items-center justify-center\"><span class=\"font-mono text-xs text-white/25\">no art</span></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 38, "<div class=\"absolute inset-0 bg-base-300 flex items-center justify-center\"><span class=\"font-mono text-xs text-base-content/25\">no art</span></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -723,14 +723,14 @@ func categoryPill(label, href string, active bool) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 49, "<a class=\"px-3.5 py-1.5 text-sm font-medium text-white/55 hover:text-white rounded-full bg-white/5 hover:bg-white/10 border border-white/10 transition-colors\" href=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 49, "<a class=\"px-3.5 py-1.5 text-sm font-medium text-base-content/55 hover:text-base-content rounded-full bg-base-content/5 hover:bg-base-content/10 border border-base-content/10 transition-colors\" href=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var23 templ.SafeURL
 			templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinURLErrs(href)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages.templ`, Line: 266, Col: 172}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages.templ`, Line: 266, Col: 207}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 			if templ_7745c5c3_Err != nil {
@@ -743,7 +743,7 @@ func categoryPill(label, href string, active bool) templ.Component {
 			var templ_7745c5c3_Var24 string
 			templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(label)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages.templ`, Line: 266, Col: 182}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages.templ`, Line: 266, Col: 217}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
 			if templ_7745c5c3_Err != nil {
@@ -789,7 +789,7 @@ func SeasonsList(seasons []media.Season, seriesID, errText string) templ.Compone
 			}
 		}
 		if len(seasons) == 0 && errText == "" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 52, "<p class=\"text-sm text-white/40 font-mono\">No seasons yet — paste a series URL above.</p>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 52, "<p class=\"text-sm text-base-content/40 font-mono\">No seasons yet — paste a series URL above.</p>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -803,14 +803,14 @@ func SeasonsList(seasons []media.Season, seriesID, errText string) templ.Compone
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 54, "<span class=\"font-mono text-xs text-white/40\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 54, "<span class=\"font-mono text-xs text-base-content/40\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var26 string
 			templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%v seasons", len(seasons)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages.templ`, Line: 284, Col: 91}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages.templ`, Line: 284, Col: 98}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 			if templ_7745c5c3_Err != nil {
@@ -866,13 +866,13 @@ func EpisodesTable(episodes []media.SeasonEpisode, errText string) templ.Compone
 			}
 		}
 		if len(episodes) == 0 && errText == "" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 57, "<p class=\"text-sm text-white/40 font-mono\">No episodes found.</p>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 57, "<p class=\"text-sm text-base-content/40 font-mono\">No episodes found.</p>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
 		if len(episodes) > 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 58, "<div class=\"grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 58, "<div class=\"grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -974,7 +974,7 @@ func DownloadForm(opts DownloadFormOpts, errs map[string]string) templ.Component
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 65, "<div class=\"grid grid-cols-2 gap-3\"><label class=\"form-control\"><span class=\"label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45\">Video quality</span> <select name=\"videoQuality\" class=\"select select-bordered rounded-field bg-base-200 border-white/10\"><option value=\"1080p\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 65, "<div class=\"grid grid-cols-2 gap-3\"><label class=\"form-control\"><span class=\"label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-base-content/45\">Video quality</span> <select name=\"videoQuality\" class=\"select select-bordered rounded-field bg-base-200 border-base-content/10\"><option value=\"1080p\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1014,7 +1014,7 @@ func DownloadForm(opts DownloadFormOpts, errs map[string]string) templ.Component
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 73, ">360p</option></select></label> <label class=\"form-control\"><span class=\"label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45\">Audio quality</span> <select name=\"audioQuality\" class=\"select select-bordered rounded-field bg-base-200 border-white/10\"><option value=\"192k\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 73, ">360p</option></select></label> <label class=\"form-control\"><span class=\"label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-base-content/45\">Audio quality</span> <select name=\"audioQuality\" class=\"select select-bordered rounded-field bg-base-200 border-base-content/10\"><option value=\"192k\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1044,12 +1044,12 @@ func DownloadForm(opts DownloadFormOpts, errs map[string]string) templ.Component
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 79, ">96k</option></select></label></div><div class=\"form-control\"><span class=\"label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45\">Audio languages</span><div class=\"flex flex-wrap gap-1.5\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 79, ">96k</option></select></label></div><div class=\"form-control\"><span class=\"label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-base-content/45\">Audio languages</span><div class=\"flex flex-wrap gap-1.5\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		for _, l := range commonAudioLocales {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 80, "<label class=\"label cursor-pointer gap-2 rounded-field px-2.5 py-1.5 bg-base-200 border border-white/10\"><input type=\"checkbox\" name=\"audioLangs\" value=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 80, "<label class=\"label cursor-pointer gap-2 rounded-field px-2.5 py-1.5 bg-base-200 border border-base-content/10\"><input type=\"checkbox\" name=\"audioLangs\" value=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -1113,12 +1113,12 @@ func DownloadForm(opts DownloadFormOpts, errs map[string]string) templ.Component
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 88, "</div><div class=\"form-control\"><span class=\"label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45\">Subtitle languages</span><div class=\"flex flex-wrap gap-1.5\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 88, "</div><div class=\"form-control\"><span class=\"label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-base-content/45\">Subtitle languages</span><div class=\"flex flex-wrap gap-1.5\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		for _, l := range commonSubLocales {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 89, "<label class=\"label cursor-pointer gap-2 rounded-field px-2.5 py-1.5 bg-base-200 border border-white/10\"><input type=\"checkbox\" name=\"subsLangs\" value=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 89, "<label class=\"label cursor-pointer gap-2 rounded-field px-2.5 py-1.5 bg-base-200 border border-base-content/10\"><input type=\"checkbox\" name=\"subsLangs\" value=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -1159,7 +1159,7 @@ func DownloadForm(opts DownloadFormOpts, errs map[string]string) templ.Component
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 94, "</div></div><div class=\"grid grid-cols-2 gap-3\"><label class=\"form-control\"><span class=\"label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45\">File format</span> <select name=\"format\" class=\"select select-bordered rounded-field bg-base-200 border-white/10\"><option value=\"mkv\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 94, "</div></div><div class=\"grid grid-cols-2 gap-3\"><label class=\"form-control\"><span class=\"label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-base-content/45\">File format</span> <select name=\"format\" class=\"select select-bordered rounded-field bg-base-200 border-base-content/10\"><option value=\"mkv\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1179,7 +1179,7 @@ func DownloadForm(opts DownloadFormOpts, errs map[string]string) templ.Component
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 98, ">.mp4</option></select></label> <label class=\"form-control\"><span class=\"label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45\">Output directory</span> <input type=\"text\" name=\"outputDir\" class=\"input input-bordered rounded-field font-mono bg-base-200 border-white/10\" value=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 98, ">.mp4</option></select></label> <label class=\"form-control\"><span class=\"label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-base-content/45\">Output directory</span> <input type=\"text\" name=\"outputDir\" class=\"input input-bordered rounded-field font-mono bg-base-200 border-base-content/10\" value=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1329,27 +1329,27 @@ func JobsListSections(js []*jobs.Job) templ.Component {
 			}
 		}
 		for _, sec := range jobSections(js) {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 106, "<div class=\"flex items-center gap-2 pt-3 first:pt-1\"><span class=\"text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 106, "<div class=\"flex items-center gap-2 pt-3 first:pt-1\"><span class=\"text-[11px] font-semibold uppercase tracking-[0.14em] text-base-content/45\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var41 string
 			templ_7745c5c3_Var41, templ_7745c5c3_Err = templ.JoinStringErrs(sec.Title)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages.templ`, Line: 475, Col: 96}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages.templ`, Line: 475, Col: 103}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var41))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 107, "</span> <span class=\"font-mono text-[11px] text-white/30\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 107, "</span> <span class=\"font-mono text-[11px] text-base-content/30\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var42 string
 			templ_7745c5c3_Var42, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(sec.Jobs)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages.templ`, Line: 476, Col: 87}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages.templ`, Line: 476, Col: 94}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var42))
 			if templ_7745c5c3_Err != nil {
@@ -1405,14 +1405,14 @@ func JobsQueue(js []*jobs.Job) templ.Component {
 		}
 		for _, row := range jobsRows(active) {
 			if row.Group != "" {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 109, "<div class=\"flex items-center gap-2 pt-3 first:pt-1\"><span class=\"text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45\">")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 109, "<div class=\"flex items-center gap-2 pt-3 first:pt-1\"><span class=\"text-[11px] font-semibold uppercase tracking-[0.14em] text-base-content/45\">")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var44 string
 				templ_7745c5c3_Var44, templ_7745c5c3_Err = templ.JoinStringErrs(row.Group)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages.templ`, Line: 497, Col: 97}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages.templ`, Line: 497, Col: 104}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var44))
 				if templ_7745c5c3_Err != nil {

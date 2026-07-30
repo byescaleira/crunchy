@@ -78,6 +78,15 @@ templ iconPlay(class string) {
 	</svg>
 }
 
+// iconCalendar is the release-date glyph next to an episode's air date, matching
+// the Crunchyroll episode-card meta line.
+templ iconCalendar(class string) {
+	<svg class={ class } viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+		<rect x="3.5" y="5" width="17" height="15.5" rx="2.2"/>
+		<path d="M3.5 9.7h17M8 3.2v3.6M16 3.2v3.6"/>
+	</svg>
+}
+
 // iconSpinner is a clean three-quarter arc that spins while a job is active.
 // atv-spin gives it a steady clinical rotation (frozen under reduced-motion).
 templ iconSpinner(class string) {
@@ -105,5 +114,22 @@ templ iconRestart(class string) {
 	<svg class={ class } viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 		<path d="M5 12a7 7 0 1 0 2-4.9"/>
 		<path d="M5 4v3.6h3.6"/>
+	</svg>
+}
+
+// iconSun is the filled-ray sun shown on the theme toggle when the active theme
+// is dark (click to go light). 24×24, currentColor, round stroke.
+templ iconSun(class string) {
+	<svg class={ class } viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+		<circle cx="12" cy="12" r="4"/>
+		<path d="M12 2.5v2.4M12 19.1v2.4M2.5 12h2.4M19.1 12h2.4M5.3 5.3l1.7 1.7M17 17l1.7 1.7M18.7 5.3 17 7M7 17l-1.7 1.7"/>
+	</svg>
+}
+
+// iconMoon is the crescent shown on the theme toggle when the active theme is
+// light (click to go dark).
+templ iconMoon(class string) {
+	<svg class={ class } viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+		<path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/>
 	</svg>
 }

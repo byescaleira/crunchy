@@ -119,6 +119,21 @@ func formatDuration(ms int) string {
 	return fmt.Sprintf("%d:%02d", m, s)
 }
 
+// formatDurationShort renders a duration as a Crunchyroll-style thumbnail badge
+// ("24m", "1h 24m"). 0 / negative → "".
+func formatDurationShort(ms int) string {
+	if ms <= 0 {
+		return ""
+	}
+	total := ms / 1000
+	h := total / 3600
+	m := (total % 3600) / 60
+	if h > 0 {
+		return fmt.Sprintf("%dh %dm", h, m)
+	}
+	return fmt.Sprintf("%dm", m)
+}
+
 // airDate returns the YYYY-MM-DD prefix of an ISO date string, or "".
 func airDate(s string) string {
 	if len(s) >= 10 {
