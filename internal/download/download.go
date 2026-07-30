@@ -40,6 +40,8 @@ type API interface {
 	GetEpisodeInfo(id string) (media.EpisodeInfo, error)
 	GetSeasons(contentId, audioLocale, subLocale string) ([]media.Season, error)
 	GetSeasonEpisodes(contentId, audioLocale, subLocale string) ([]media.SeasonEpisode, error)
+	GetSeries(id string) (media.Series, error)
+	DownloadImage(url string) (string, error)
 	DeleteStream(contentId, sToken string) (bool, error)
 	ParseManifest(url string) (*mpd.MPD, error)
 	GetLicense(psshData, contentId, videoToken string) ([]*widevine.Key, error)
@@ -58,6 +60,7 @@ type Downloader struct {
 	Debug        bool
 	Progress     Progress
 	OutputDir    string
+	Format       string // "mkv" (default) or "mp4"
 
 	// The I/O steps are overridable func fields so the orchestration (the
 	// keys-ordering invariant, the per-track sequence) can be tested without
@@ -65,7 +68,7 @@ type Downloader struct {
 	// the first time a download runs (see ensureSeams).
 	downloadTrack     func(baseUrl, representationId *string, set *mpd.AdaptationSet, keys []*widevine.Key) (string, error)
 	downloadSubtitles func(url string) (string, error)
-	merge             func(videoFile string, audioTracks, subTracks []mux.MediaTrack, outputFile string, info media.EpisodeInfo) error
+	merge             func(videoFile string, audioTracks, subTracks []mux.MediaTrack, outputFile, coverFile, format string, info media.EpisodeInfo) error
 }
 
 // workers returns the configured segment-download parallelism, defaulting to 10
@@ -92,6 +95,9 @@ func (d *Downloader) ensureSeams() {
 	}
 	if d.merge == nil {
 		d.merge = mux.Merge
+	}
+	if d.Format == "" {
+		d.Format = "mkv"
 	}
 	if d.Progress == nil {
 		d.Progress = stdoutProgress{}
@@ -395,17 +401,40 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) error
 	videoQuality := &d.VideoQuality
 	audioQuality := &d.AudioQuality
 
-	outputFile := filepath.Join(seriesDir, fmt.Sprintf("%s S%02dE%02d - %s [%s].mkv",
+	ext := ".mkv"
+	if d.Format == "mp4" {
+		ext = ".mp4"
+	}
+	outputFile := filepath.Join(seriesDir, fmt.Sprintf("%s S%02dE%02d - %s [%s]%s",
 		cleanSeriesTitle,
 		info.EpisodeMetadata.SeasonNumber,
 		info.EpisodeMetadata.EpisodeNumber,
 		cleanEpisodeTitle,
 		*videoQuality,
+		ext,
 	))
 
 	if _, err := os.Stat(outputFile); err == nil {
 		d.Progress.Printf("Episode %v is already downloaded, skipping...\n", info.EpisodeMetadata.EpisodeNumber)
 		return nil
+	}
+
+	// Fetch series metadata + HD cover best-effort: enriches the mux tags
+	// (genres, synopsis, air date, maturity) and attaches the poster. A missing
+	// series or image never breaks a download — the cover is just skipped. The
+	// temp cover file is cleaned up by the mux step (and by this defer as a
+	// safety net for paths that return before muxing).
+	var coverFile string
+	if seriesID := info.EpisodeMetadata.SeriesID; seriesID != "" {
+		if series, err := d.API.GetSeries(seriesID); err == nil {
+			info.Series = series
+			if img, ok := media.BestImage(series.Images.PosterTall); ok {
+				coverFile, _ = d.API.DownloadImage(img.Source)
+			}
+		}
+	}
+	if coverFile != "" {
+		defer os.Remove(coverFile)
 	}
 
 	// Copy the language lists so the "all" expansion below is local to this
@@ -575,7 +604,7 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) error
 		delete(activeStreams, version.contentId)
 	}
 
-	return d.merge(videoFile, audioTracks, subTracks, outputFile, info)
+	return d.merge(videoFile, audioTracks, subTracks, outputFile, coverFile, d.Format, info)
 }
 
 // Season downloads every episode in a season list, building each episode's
@@ -588,13 +617,21 @@ func (d *Downloader) Season(episodes []media.SeasonEpisode) error {
 		info := media.EpisodeInfo{
 			EpisodeMetadata: media.EpisodeMetadata{
 				SeriesTitle:        episode.SeriesTitle,
+				SeriesID:           episode.SeriesID,
 				SeasonNumber:       episode.SeasonNumber,
+				SeasonTitle:        episode.SeasonTitle,
 				EpisodeNumber:      episode.EpisodeNumber,
 				AudioLocale:        episode.AudioLocale,
 				Versions:           episode.Versions,
 				AvailabilityStarts: episode.AvailabilityStarts,
+				EpisodeAirDate:     episode.EpisodeAirDate,
+				DurationMS:         episode.DurationMS,
+				IsPremiumOnly:      episode.IsPremiumOnly,
+				MaturityRatings:    episode.MaturityRatings,
+				SubtitleLocales:    episode.SubtitleLocales,
 			},
-			Title: episode.Title,
+			Title:       episode.Title,
+			Description: episode.Description,
 		}
 
 		if err := d.Episode(episode.ID, info); err != nil {

@@ -40,6 +40,7 @@ type DownloadOpts struct {
 	AudioLangs   []string
 	SubsLangs    []string
 	OutputDir    string
+	Format       string // "mkv" (default) or "mp4"
 }
 
 // config is the persisted (0600) session config. etpRt is sensitive.
@@ -134,6 +135,7 @@ func makeBuildTask(client *crunchy.Client, debug bool, outputDir string) func(st
 				AudioLangs:   opts.AudioLangs,
 				SubsLangs:    opts.SubsLangs,
 				OutputDir:    opts.OutputDir,
+				Format:       opts.Format,
 				Debug:        debug,
 				Progress:     p,
 			}

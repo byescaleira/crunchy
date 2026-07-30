@@ -134,6 +134,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		AudioLangs:   splitLangs(r.FormValue("audioLangs")),
 		SubsLangs:    splitLangs(r.FormValue("subsLangs")),
 		OutputDir:    strings.TrimSpace(r.FormValue("outputDir")),
+		Format:       valueOr(r, "format", "mkv"),
 	}
 	if opts.OutputDir == "" {
 		s.mu.RLock()

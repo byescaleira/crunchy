@@ -39,21 +39,12 @@ func (c *Client) GetSeries(id string) (media.Series, error) {
 	return sr.Data[0], nil
 }
 
-// DownloadCover fetches the highest-resolution portrait poster (poster_tall,
-// up to 1560x2340) for a series id into a temp .jpg and returns its path. The
-// caller removes the file after muxing. A missing image collection is not an
-// error: it returns ("", nil) so a cover-less download still succeeds.
-func (c *Client) DownloadCover(seriesID string) (string, error) {
-	series, err := c.GetSeries(seriesID)
-	if err != nil {
-		return "", nil // best-effort: never fail a download for a missing cover
-	}
-	img, ok := media.BestImage(series.Images.PosterTall)
-	if !ok {
-		return "", nil
-	}
-
-	req, err := http.NewRequest(http.MethodGet, img.Source, nil)
+// DownloadImage fetches an arbitrary image URL (a CMS poster/thumbnail source)
+// into a temp .jpg and returns its path. The caller removes the file after
+// muxing. Any failure returns ("", nil): a cover is best-effort and must never
+// fail a download.
+func (c *Client) DownloadImage(url string) (string, error) {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return "", nil
 	}

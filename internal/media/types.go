@@ -53,7 +53,9 @@ type EpisodeMetadataResponse struct {
 
 // EpisodeInfo is one entry from the CMS objects endpoint. The top-level fields
 // (Title, Description, Slug) live directly on the data item; the rest are nested
-// under episode_metadata.
+// under episode_metadata. Series is NOT on the wire here — it is populated
+// programmatically by the downloader (a best-effort GetSeries) so the mux step
+// has genre/category data for tags.
 type EpisodeInfo struct {
 	EpisodeMetadata EpisodeMetadata `json:"episode_metadata"`
 	// Episode title
@@ -62,6 +64,8 @@ type EpisodeInfo struct {
 	Description string `json:"description"`
 	// URL slug of the episode
 	Slug string `json:"slug"`
+	// Series metadata for mux tags (genre/categories). Not unmarshaled here.
+	Series Series `json:"-"`
 }
 
 // EpisodeMetadata carries the per-episode metadata used for the output path,

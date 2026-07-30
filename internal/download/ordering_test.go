@@ -46,6 +46,12 @@ func (f *fakeAPI) GetSeasons(string, string, string) ([]media.Season, error) {
 func (f *fakeAPI) GetSeasonEpisodes(string, string, string) ([]media.SeasonEpisode, error) {
 	return nil, nil
 }
+func (f *fakeAPI) GetSeries(string) (media.Series, error) {
+	return media.Series{}, nil
+}
+func (f *fakeAPI) DownloadImage(string) (string, error) {
+	return "", nil
+}
 func (f *fakeAPI) DeleteStream(string, string) (bool, error) { return true, nil }
 func (f *fakeAPI) ParseManifest(string) (*mpd.MPD, error)    { return f.manifest, nil }
 func (f *fakeAPI) GetLicense(psshData, contentId, videoToken string) ([]*widevine.Key, error) {
@@ -111,7 +117,7 @@ func TestDownloadEpisode_VersionKeyOrdering(t *testing.T) {
 		return "track-" + kind, nil
 	}
 	d.downloadSubtitles = func(url string) (string, error) { return "subs.ass", nil }
-	d.merge = func(videoFile string, audioTracks, subTracks []mux.MediaTrack, outputFile string, info media.EpisodeInfo) error {
+	d.merge = func(videoFile string, audioTracks, subTracks []mux.MediaTrack, outputFile, coverFile, format string, info media.EpisodeInfo) error {
 		api.record(event{kind: "merge"})
 		return nil
 	}

@@ -20,6 +20,7 @@ var (
 	subtitlesLang = flag.String("subs-lang", "en-US", "Subtitle language(s), comma-separated for multiple (e.g. \"en-US,es-419\"). First is the default track")
 	videoQuality  = flag.String("video-quality", "1080p", "Video quality")
 	audioQuality  = flag.String("audio-quality", "192k", "Audio quality")
+	format        = flag.String("format", "mkv", "Output container: mkv or mp4")
 	seasonNumber  = flag.Int("season", 0, "Season number. Not used if an episode link is entered")
 	etpRt         = flag.String("etp-rt", "", "The \"etp_rt\" cookie value of your account")
 	debug         = flag.Bool("debug-manifest", false, "Log raw episode playback JSON and manifest XML")
@@ -135,6 +136,7 @@ func main() {
 		AudioQuality: *audioQuality,
 		AudioLangs:   audioLangs,
 		SubsLangs:    subsLangs,
+		Format:       *format,
 		Debug:        *debug,
 	}
 
