@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -51,10 +52,19 @@ type DownloadOpts struct {
 	Format       string // "mkv" (default) or "mp4"
 }
 
-// config is the persisted (0600) session config. etpRt is sensitive.
+// config is the persisted (0600) session config. etpRt is sensitive. The
+// Last* fields remember the user's last download-options choices so the modal
+// pre-fills them next time instead of resetting to defaults every download.
 type config struct {
 	EtpRt     string `json:"etpRt"`
 	OutputDir string `json:"outputDir"`
+
+	LastVideoQuality string   `json:"lastVideoQuality"`
+	LastAudioQuality string   `json:"lastAudioQuality"`
+	LastFormat       string   `json:"lastFormat"`
+	LastAudioLangs   []string `json:"lastAudioLangs"`
+	LastSubsLangs    []string `json:"lastSubsLangs"`
+	LastOutputDir    string   `json:"lastOutputDir"`
 }
 
 // Server holds the session state and dependencies. Goroutines read api/buildTask
@@ -71,6 +81,7 @@ type Server struct {
 	buildSeasonTasks func(seasonID string, opts DownloadOpts) ([]jobs.Task, string, error)
 	buildSeriesTasks func(seriesID string, opts DownloadOpts) ([]jobs.Task, string, error)
 	outputDir        string
+	cfg              config // single source of truth for persisted prefs (mu-guarded)
 }
 
 // New creates a Server rooted at dataDir. If etpRt is empty it tries to load it
@@ -88,11 +99,18 @@ func New(dataDir, etpRt string, debug bool) (*Server, error) {
 		debug:   debug,
 	}
 
+	// Always load the saved config so the last-used download prefs (and the
+	// chosen output dir) survive a restart, even when a token is supplied via
+	// the flag. A missing file is not an error — cfg stays zero-valued and the
+	// accessors fall back to defaults.
+	saved, _ := s.loadConfig()
+	s.mu.Lock()
+	s.cfg = saved
+	s.outputDir = saved.OutputDir
+	s.mu.Unlock()
+
 	if etpRt == "" {
-		if cfg, err := s.loadConfig(); err == nil {
-			etpRt = cfg.EtpRt
-			s.outputDir = cfg.OutputDir
-		}
+		etpRt = saved.EtpRt
 	}
 
 	if etpRt != "" {
@@ -115,11 +133,17 @@ func (s *Server) configure(etpRt, outputDir string) error {
 	s.mu.Lock()
 	s.api = client
 	s.outputDir = outputDir
+	// Update only the token + session output dir on the live config; the Last*
+	// prefs are preserved (they live in s.cfg). Copy out under the lock and
+	// persist after unlock so saveConfig never re-enters the mutex.
+	s.cfg.EtpRt = etpRt
+	s.cfg.OutputDir = outputDir
 	s.buildTask = makeBuildTask(client, s.debug, outputDir)
 	s.buildSeasonTasks = makeSeasonTaskBuilder(client, s.debug)
 	s.buildSeriesTasks = makeSeriesTaskBuilder(client, s.debug)
+	cfg := s.cfg
 	s.mu.Unlock()
-	return s.saveConfig(config{EtpRt: etpRt, OutputDir: outputDir})
+	return s.saveConfig(cfg)
 }
 
 // Configured reports whether a working token is on file.
@@ -127,6 +151,43 @@ func (s *Server) Configured() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.api != nil
+}
+
+// lastDownloadOpts returns the last-used download options from the persisted
+// config (Kind/ID empty — those are per-target, never remembered). It is the
+// single source the modal pre-fills from; downloadFormOpts applies per-field
+// defaults on top of it when a field is empty.
+func (s *Server) lastDownloadOpts() DownloadOpts {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return DownloadOpts{
+		VideoQuality: s.cfg.LastVideoQuality,
+		AudioQuality: s.cfg.LastAudioQuality,
+		Format:       s.cfg.LastFormat,
+		AudioLangs:   s.cfg.LastAudioLangs,
+		SubsLangs:    s.cfg.LastSubsLangs,
+		OutputDir:    s.cfg.LastOutputDir,
+	}
+}
+
+// persistLastOpts remembers the user's last download-options choices by writing
+// them into the live config and persisting it (0600). It never drops the token
+// or session output dir — it reads s.cfg (which carries them) and only overwrites
+// the Last* fields. Best-effort: a write failure is logged, not returned, so a
+// full disk never fails an otherwise-successful enqueue.
+func (s *Server) persistLastOpts(opts DownloadOpts) {
+	s.mu.Lock()
+	s.cfg.LastVideoQuality = opts.VideoQuality
+	s.cfg.LastAudioQuality = opts.AudioQuality
+	s.cfg.LastFormat = opts.Format
+	s.cfg.LastAudioLangs = opts.AudioLangs
+	s.cfg.LastSubsLangs = opts.SubsLangs
+	s.cfg.LastOutputDir = opts.OutputDir
+	cfg := s.cfg
+	s.mu.Unlock()
+	if err := s.saveConfig(cfg); err != nil {
+		log.Printf("persist last download opts: %v", err)
+	}
 }
 
 // makeBuildTask returns a factory that builds a jobs.Task for one episode

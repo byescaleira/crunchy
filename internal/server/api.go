@@ -198,6 +198,10 @@ func (s *Server) handleAPIDownload(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": msg})
 		return
 	}
+	// Remember the user's choices so the modal/extension pre-fills them next
+	// time (shared helper with the web form).
+	s.persistLastOpts(opts)
+
 	writeJSON(w, http.StatusCreated, map[string]any{"jobId": job.ID})
 }
 

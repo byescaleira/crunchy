@@ -154,21 +154,48 @@ func (s *Server) batchSummary(kind, id string) (string, bool) {
 	return "", false
 }
 
-// downloadFormOpts builds the modal view-model for a kind/target, applying
-// sensible defaults (ja-JP audio, en-US subs, 1080p/192k, .mkv, the session
-// output dir). Used for both the initial GET and the 422 re-render, so a
-// re-rendered form keeps the same defaults for the fields the user didn't touch.
+// downloadFormOpts builds the modal view-model for a kind/target. It pre-fills
+// from the last-used options (persisted across restarts) and falls back per field
+// to sensible defaults (ja-JP audio, en-US subs, 1080p/192k, .mkv, the session
+// output dir) when a last-used field is empty. Used for both the initial GET and
+// the 422 re-render, so a re-rendered form keeps the same pre-fill for the fields
+// the user didn't touch.
 func (s *Server) downloadFormOpts(kind, id string) web.DownloadFormOpts {
+	last := s.lastDownloadOpts()
+	videoQuality := last.VideoQuality
+	if videoQuality == "" {
+		videoQuality = "1080p"
+	}
+	audioQuality := last.AudioQuality
+	if audioQuality == "" {
+		audioQuality = "192k"
+	}
+	format := last.Format
+	if format == "" {
+		format = "mkv"
+	}
+	audio := last.AudioLangs
+	if len(audio) == 0 {
+		audio = []string{"ja-JP"}
+	}
+	subs := last.SubsLangs
+	if len(subs) == 0 {
+		subs = []string{"en-US"}
+	}
+	outputDir := last.OutputDir
+	if outputDir == "" {
+		outputDir = s.sessionOutputDir()
+	}
 	return web.DownloadFormOpts{
 		Kind:          kind,
 		ID:            id,
 		Summary:       s.downloadSummary(kind, id),
-		VideoQuality:  "1080p",
-		AudioQuality:  "192k",
-		Format:        "mkv",
-		SelectedAudio: []string{"ja-JP"},
-		SelectedSubs:  []string{"en-US"},
-		OutputDir:     s.sessionOutputDir(),
+		VideoQuality:  videoQuality,
+		AudioQuality:  audioQuality,
+		Format:        format,
+		SelectedAudio: audio,
+		SelectedSubs:  subs,
+		OutputDir:     outputDir,
 	}
 }
 
@@ -274,6 +301,9 @@ func (s *Server) handleDownloadPost(w http.ResponseWriter, r *http.Request) {
 		s.renderDownloadForm422(w, r, opts, map[string]string{"_": err.Error()})
 		return
 	}
+
+	// Remember the user's choices so the modal pre-fills them next time.
+	s.persistLastOpts(opts)
 
 	// Success: empty body + HX-Trigger. The layout's closeDownloadModal listener
 	// closes the dialog and clears the form; downloadsUpdated refreshes

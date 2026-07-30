@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -46,9 +47,11 @@ func (f *fakeAPI) GetSeries(id string) (media.Series, error) {
 
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
+	dir := t.TempDir()
 	return &Server{
 		manager: jobs.NewManager(),
-		dataDir: t.TempDir(),
+		dataDir: dir,
+		cfgPath: filepath.Join(dir, "config.json"),
 	}
 }
 
@@ -524,6 +527,144 @@ func TestAPIJobs_FoundAndMissing(t *testing.T) {
 	h.ServeHTTP(w2, r2)
 	if w2.Code != http.StatusNotFound {
 		t.Errorf("expected 404 for unknown job, got %d", w2.Code)
+	}
+}
+
+// TestPersistLastOpts_KeepsTokenAndStores asserts that a successful download
+// persists the user's choices AND never drops the sensitive etpRt or the
+// session output dir (read-modify-write, not a literal overwrite). This is the
+// same s.cfg-merge shape configure uses to save a token, so it also covers the
+// "re-saving a token must not wipe prefs" invariant.
+func TestPersistLastOpts_KeepsTokenAndStores(t *testing.T) {
+	s := newTestServer(t)
+	s.cfg = config{EtpRt: "tok-secret", OutputDir: "/srv/media"}
+	if err := s.saveConfig(s.cfg); err != nil {
+		t.Fatal(err)
+	}
+	s.buildTask = func(string, DownloadOpts) jobs.Task { return func(download.Progress) error { return nil } }
+	h := s.Handler()
+	r, w := postForm("/downloads", "kind=episode&id=ep1&videoQuality=720p&audioQuality=128k&audioLangs=en-US&subsLangs=pt-BR&format=mp4&outputDir=/out/x")
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
+	}
+
+	cfg, err := s.loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.EtpRt != "tok-secret" {
+		t.Errorf("persist must keep etpRt, got %q", cfg.EtpRt)
+	}
+	if cfg.OutputDir != "/srv/media" {
+		t.Errorf("persist must keep session outputDir, got %q", cfg.OutputDir)
+	}
+	if cfg.LastVideoQuality != "720p" || cfg.LastAudioQuality != "128k" || cfg.LastFormat != "mp4" {
+		t.Errorf("last-used scalar fields not stored: %+v", cfg)
+	}
+	if len(cfg.LastAudioLangs) != 1 || cfg.LastAudioLangs[0] != "en-US" {
+		t.Errorf("last audio langs not stored: %v", cfg.LastAudioLangs)
+	}
+	if len(cfg.LastSubsLangs) != 1 || cfg.LastSubsLangs[0] != "pt-BR" {
+		t.Errorf("last subs langs not stored: %v", cfg.LastSubsLangs)
+	}
+	if cfg.LastOutputDir != "/out/x" {
+		t.Errorf("last output dir not stored: %q", cfg.LastOutputDir)
+	}
+}
+
+// TestPersistLastOpts_APIPath asserts the JSON /api/download surface also
+// persists choices (and keeps the token), since both surfaces share the helper.
+func TestPersistLastOpts_APIPath(t *testing.T) {
+	s := newTestServer(t)
+	s.cfg = config{EtpRt: "tok-secret"}
+	if err := s.saveConfig(s.cfg); err != nil {
+		t.Fatal(err)
+	}
+	s.buildTask = func(string, DownloadOpts) jobs.Task { return func(download.Progress) error { return nil } }
+	h := s.Handler()
+	r, w := postJSON(`/api/download`, `{"kind":"episode","id":"ep1","audio":["en-US"],"quality":"720p","format":"mp4","location":"/out/api"}`)
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	cfg, err := s.loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.EtpRt != "tok-secret" {
+		t.Errorf("api persist must keep etpRt, got %q", cfg.EtpRt)
+	}
+	if cfg.LastFormat != "mp4" || cfg.LastVideoQuality != "720p" || cfg.LastOutputDir != "/out/api" {
+		t.Errorf("api persist lost fields: %+v", cfg)
+	}
+}
+
+// TestDownloadNew_PreFillsFromSaved asserts the modal pre-selects the persisted
+// last-used options instead of the hardcoded defaults.
+func TestDownloadNew_PreFillsFromSaved(t *testing.T) {
+	s := newTestServer(t)
+	s.cfg = config{
+		LastFormat:       "mp4",
+		LastVideoQuality: "720p",
+		LastAudioQuality: "128k",
+		LastAudioLangs:   []string{"en-US", "pt-BR"},
+		LastSubsLangs:    []string{"pt-BR"},
+		LastOutputDir:    "/out/y",
+	}
+	h := s.Handler()
+	r, w := get("/downloads/new?kind=episode&id=ep1")
+	got := body(t, h, r, w)
+	if !strings.Contains(got, `value="mp4" selected`) {
+		t.Errorf("saved format mp4 should be pre-selected; got: %s", got)
+	}
+	if !strings.Contains(got, `value="720p" selected`) {
+		t.Errorf("saved video quality 720p should be pre-selected; got: %s", got)
+	}
+	if strings.Contains(got, `value="1080p" selected`) {
+		t.Error("1080p must not be selected when 720p is the saved quality")
+	}
+	if !strings.Contains(got, `value="/out/y"`) {
+		t.Errorf("saved output dir should be pre-filled; got: %s", got)
+	}
+	// Two audio locales + one subtitle locale saved -> three checked boxes
+	// (defaults would be one audio + one sub = two).
+	if c := strings.Count(got, "checked"); c != 3 {
+		t.Errorf("expected 3 checked boxes (2 audio + 1 sub), got %d", c)
+	}
+}
+
+// TestConfig_RoundTrip asserts the new last-used fields survive a save/load
+// cycle, so a restart pre-fills the modal.
+func TestConfig_RoundTrip(t *testing.T) {
+	s := newTestServer(t)
+	in := config{
+		EtpRt:            "tok",
+		OutputDir:        "/srv",
+		LastVideoQuality: "720p",
+		LastAudioQuality: "128k",
+		LastFormat:       "mp4",
+		LastAudioLangs:   []string{"en-US", "pt-BR"},
+		LastSubsLangs:    []string{"pt-BR"},
+		LastOutputDir:    "/out",
+	}
+	if err := s.saveConfig(in); err != nil {
+		t.Fatal(err)
+	}
+	out, err := s.loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.EtpRt != in.EtpRt || out.OutputDir != in.OutputDir ||
+		out.LastVideoQuality != in.LastVideoQuality || out.LastAudioQuality != in.LastAudioQuality ||
+		out.LastFormat != in.LastFormat || out.LastOutputDir != in.LastOutputDir {
+		t.Errorf("round-trip lost scalar fields: in=%+v out=%+v", in, out)
+	}
+	if len(out.LastAudioLangs) != 2 || out.LastAudioLangs[0] != "en-US" || out.LastAudioLangs[1] != "pt-BR" {
+		t.Errorf("audio langs not round-tripped: %v", out.LastAudioLangs)
+	}
+	if len(out.LastSubsLangs) != 1 || out.LastSubsLangs[0] != "pt-BR" {
+		t.Errorf("subs langs not round-tripped: %v", out.LastSubsLangs)
 	}
 }
 
