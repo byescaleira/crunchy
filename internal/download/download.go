@@ -56,6 +56,7 @@ type Downloader struct {
 	SubsLangs    []string
 	MaxWorkers   int
 	Debug        bool
+	Progress     Progress
 
 	// The I/O steps are overridable func fields so the orchestration (the
 	// keys-ordering invariant, the per-track sequence) can be tested without
@@ -75,8 +76,9 @@ func (d *Downloader) workers() int {
 	return 10
 }
 
-// ensureSeams fills in the default I/O implementations and HTTP client. It is
-// idempotent so callers (and tests) only override the seams they care about.
+// ensureSeams fills in the default I/O implementations, HTTP client and progress
+// reporter. It is idempotent so callers (and tests) only override the seams they
+// care about.
 func (d *Downloader) ensureSeams() {
 	if d.HTTP == nil {
 		d.HTTP = crunchy.SharedClient
@@ -89,6 +91,9 @@ func (d *Downloader) ensureSeams() {
 	}
 	if d.merge == nil {
 		d.merge = mux.Merge
+	}
+	if d.Progress == nil {
+		d.Progress = stdoutProgress{}
 	}
 }
 
@@ -220,7 +225,7 @@ func (d *Downloader) downloadParts(baseUrl, representationId *string, set *mpd.A
 				}
 				segFiles[job.index] = name
 				count := done.Add(1)
-				fmt.Printf("\rDownloaded %v of %v segments (%v%%)", count, total, (100*count)/int64(total))
+				d.Progress.Segment(int(count), total)
 			}
 		}()
 	}
@@ -237,7 +242,7 @@ func (d *Downloader) downloadParts(baseUrl, representationId *string, set *mpd.A
 		return "", downloadErr
 	}
 
-	fmt.Println("\nFinished downloading!")
+	d.Progress.Printf("\nFinished downloading!\n")
 
 	// Decrypt segment-by-segment straight from the temp files into the output
 	// file. This keeps only one segment in memory at a time during decryption,
@@ -394,7 +399,7 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) error
 	))
 
 	if _, err := os.Stat(outputFile); err == nil {
-		fmt.Printf("Episode %v is already downloaded, skipping...\n", info.EpisodeMetadata.EpisodeNumber)
+		d.Progress.Printf("Episode %v is already downloaded, skipping...\n", info.EpisodeMetadata.EpisodeNumber)
 		return nil
 	}
 
@@ -438,20 +443,20 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) error
 	for _, locale := range audioLangs {
 		guid, ok := guidByLocale[locale]
 		if !ok {
-			fmt.Printf("! Audio locale %s is not available for episode %v, aborting this episode.\n", locale, info.EpisodeMetadata.EpisodeNumber)
+			d.Progress.Printf("! Audio locale %s is not available for episode %v, aborting this episode.\n", locale, info.EpisodeMetadata.EpisodeNumber)
 			return nil
 		}
 		versions = append(versions, audioVersion{locale: locale, contentId: guid})
 	}
 
-	fmt.Printf("Downloading: %s (S%02vE%02v) from %s\n", info.Title, info.EpisodeMetadata.SeasonNumber, info.EpisodeMetadata.EpisodeNumber, info.EpisodeMetadata.SeriesTitle)
+	d.Progress.Printf("Downloading: %s (S%02vE%02v) from %s\n", info.Title, info.EpisodeMetadata.SeasonNumber, info.EpisodeMetadata.EpisodeNumber, info.EpisodeMetadata.SeriesTitle)
 
 	// activeStreams tracks every playback token we open so we can release them
 	// all if anything fails partway through. The release is best-effort: a
 	// transport error here must not mask the real download error returned below.
 	activeStreams := map[string]string{}
 	defer func() {
-		fmt.Print("Cleaning up...")
+		d.Progress.Printf("Cleaning up...")
 
 		for id, sToken := range activeStreams {
 			_, _ = d.API.DeleteStream(id, sToken)
@@ -476,18 +481,18 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) error
 		sort.Strings(subsLangs)
 	}
 
-	fmt.Printf("Audio locales: %s | Subtitle locales: %s\n", strings.Join(audioLangs, ", "), strings.Join(subsLangs, ", "))
+	d.Progress.Printf("Audio locales: %s | Subtitle locales: %s\n", strings.Join(audioLangs, ", "), strings.Join(subsLangs, ", "))
 
 	for _, locale := range subsLangs {
 		if firstEpisode.Subtitles[locale] == nil {
-			fmt.Printf("! Subtitle locale %s is not available for episode %v, aborting this episode.\n", locale, info.EpisodeMetadata.EpisodeNumber)
+			d.Progress.Printf("! Subtitle locale %s is not available for episode %v, aborting this episode.\n", locale, info.EpisodeMetadata.EpisodeNumber)
 			return nil
 		}
 	}
 
 	var subTracks []mux.MediaTrack
 	for _, locale := range subsLangs {
-		fmt.Printf("Downloading subtitles for %s...\n", output.TrackTitle(locale))
+		d.Progress.Printf("Downloading subtitles for %s...\n", output.TrackTitle(locale))
 		f, err := d.downloadSubtitles(firstEpisode.Subtitles[locale].URL)
 		if err != nil {
 			return err
@@ -495,7 +500,7 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) error
 		subTracks = append(subTracks, mux.MediaTrack{File: f, Locale: locale})
 	}
 	if len(subTracks) > 0 {
-		fmt.Println("Downloaded subtitles!")
+		d.Progress.Printf("Downloaded subtitles!\n")
 	}
 
 	var videoFile string
@@ -530,7 +535,7 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) error
 		if err != nil {
 			return fmt.Errorf("audio set: %s", err)
 		}
-		fmt.Printf("Downloading %s audio...\n", output.TrackTitle(version.locale))
+		d.Progress.Printf("Downloading %s audio...\n", output.TrackTitle(version.locale))
 		audioBaseUrl, audioRepresentationId := manifest.GetBaseURL(audioSet, false, *audioQuality)
 		if audioBaseUrl == nil {
 			return fmt.Errorf("failed to get the audio base URL for %s, maybe the audio quality you entered is wrong?", version.locale)
@@ -548,7 +553,7 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) error
 			if err != nil {
 				return fmt.Errorf("video set: %s", err)
 			}
-			fmt.Println("Downloading video...")
+			d.Progress.Printf("Downloading video...\n")
 			baseUrl, representationId := manifest.GetBaseURL(videoSet, true, *videoQuality)
 			if baseUrl == nil {
 				return fmt.Errorf("failed to get the video base URL, maybe the video quality you entered is wrong?")
@@ -560,7 +565,7 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) error
 		}
 
 		if success, _ := d.API.DeleteStream(version.contentId, episode.Token); !success {
-			fmt.Print("Failed to remove the player stream, you will probably have issues downloading other episodes.\n")
+			d.Progress.Printf("Failed to remove the player stream, you will probably have issues downloading other episodes.\n")
 		}
 		delete(activeStreams, version.contentId)
 	}
@@ -572,7 +577,7 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) error
 // EpisodeInfo from its SeasonEpisode entry. A failed episode is logged and
 // skipped so one bad episode can't abort the whole season.
 func (d *Downloader) Season(episodes []media.SeasonEpisode) error {
-	fmt.Printf("Downloading season %v of %s (%v episodes)\n\n", episodes[0].SeasonNumber, episodes[0].SeriesTitle, len(episodes))
+	d.Progress.Printf("Downloading season %v of %s (%v episodes)\n\n", episodes[0].SeasonNumber, episodes[0].SeriesTitle, len(episodes))
 
 	for _, episode := range episodes {
 		info := media.EpisodeInfo{
@@ -588,7 +593,7 @@ func (d *Downloader) Season(episodes []media.SeasonEpisode) error {
 		}
 
 		if err := d.Episode(episode.ID, info); err != nil {
-			fmt.Printf("! Episode %v failed: %v\n", episode.EpisodeNumber, err)
+			d.Progress.Printf("! Episode %v failed: %v\n", episode.EpisodeNumber, err)
 			continue
 		}
 	}
