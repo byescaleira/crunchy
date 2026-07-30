@@ -100,9 +100,11 @@ func TestGetFilename(t *testing.T) {
 		}
 		name := getFilename(set)
 		t.Cleanup(func() { os.Remove(name) })
-		// Bug #6 is fixed in step b; here we assert the audio temp prefix regardless.
 		if !strings.Contains(filepath.Base(name), "crdl-audio-") {
 			t.Errorf("audio filename = %q, want crdl-audio- prefix", name)
+		}
+		if !strings.HasSuffix(name, ".m4a") {
+			t.Errorf("audio filename = %q, want .m4a suffix (AAC in MP4)", name)
 		}
 	})
 

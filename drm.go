@@ -87,43 +87,38 @@ func sendChallenge(contentId, videoToken string, challenge []byte) ([]byte, erro
 	return decoded, nil
 }
 
+// getWidevineDevice loads a Widevine CDM from the working directory. It prefers
+// a single ".wvd" file; otherwise it looks for the "client_id.bin" +
+// "private_key.pem" pair, opening both by name so the result no longer depends
+// on directory sort order (the previous single-pass loop would break early
+// after private_key.pem and miss a client_id.bin that sorted later, leaving the
+// client ID empty and silently returning "no device").
 func getWidevineDevice() (*widevine.Device, error) {
-	var clientID []byte
-	var privateKey []byte
-	files, _ := os.ReadDir(".")
+	files, err := os.ReadDir(".")
+	if err != nil {
+		return nil, nil
+	}
 	for _, file := range files {
 		if strings.HasSuffix(file.Name(), ".wvd") {
-			wvd, err := os.Open(file.Name())
-			if err != nil {
-				return nil, err
-			}
-
-			return widevine.NewDevice(widevine.FromWVD(io.NopCloser(wvd)))
-		} else if file.Name() == "client_id.bin" {
-			f, err := os.Open("client_id.bin")
+			f, err := os.Open(file.Name())
 			if err != nil {
 				return nil, err
 			}
 			defer f.Close()
-
-			clientID, err = io.ReadAll(f)
-		} else if file.Name() == "private_key.pem" {
-			f, err := os.Open("private_key.pem")
-			if err != nil {
-				return nil, err
-			}
-			defer f.Close()
-
-			privateKey, err = io.ReadAll(f)
-			break
+			return widevine.NewDevice(widevine.FromWVD(f))
 		}
 	}
 
-	if len(clientID) > 0 && len(privateKey) > 0 {
-		return widevine.NewDevice(widevine.FromRaw(clientID, privateKey))
+	// No .wvd: load the raw client_id.bin + private_key.pem pair by name.
+	clientID, err := os.ReadFile("client_id.bin")
+	if err != nil {
+		return nil, nil
 	}
-
-	return nil, nil
+	privateKey, err := os.ReadFile("private_key.pem")
+	if err != nil {
+		return nil, nil
+	}
+	return widevine.NewDevice(widevine.FromRaw(clientID, privateKey))
 }
 
 func getLicense(psshData, contentId, videoToken string) error {

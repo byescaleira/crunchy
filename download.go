@@ -83,7 +83,7 @@ func getFilename(set *mpd.AdaptationSet) string {
 			f.Close()
 			return name
 		} else if representation.Bandwidth != nil {
-			f, _ := os.CreateTemp("", "crdl-audio-*.mp3")
+			f, _ := os.CreateTemp("", "crdl-audio-*.m4a")
 			name := f.Name()
 			f.Close()
 			return name

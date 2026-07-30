@@ -57,9 +57,7 @@ func TestBuildMergeArgs(t *testing.T) {
 			"-metadata:g", "title=S01E02 - Ep",
 			"-metadata:g", "show=Series",
 			"-metadata:g", "track=2",
-			// Bug #2 (step b): season_number currently uses EpisodeNumber (2);
-			// after the fix it must read SeasonNumber -> "1".
-			"-metadata:g", "season_number=2",
+			"-metadata:g", "season_number=1",
 			"out.mkv",
 		}
 		if !reflect.DeepEqual(got, want) {
@@ -91,7 +89,7 @@ func TestBuildMergeArgs(t *testing.T) {
 			"-metadata:g", "title=S03E04 - Ep",
 			"-metadata:g", "show=Series",
 			"-metadata:g", "track=4",
-			"-metadata:g", "season_number=4", // bug #2: EpisodeNumber; step b -> "3"
+			"-metadata:g", "season_number=3",
 			"out.mkv",
 		}
 		if !reflect.DeepEqual(got, want) {
