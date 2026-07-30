@@ -1,6 +1,10 @@
-package main
+// Package output holds pure helpers for building output paths and media
+// metadata: the locale→name and locale→ISO-639-2 maps, the track-title lookup,
+// and filename sanitization. It depends only on the media package.
+package output
 
-var languageNames = map[string]string{
+// LanguageNames maps a Crunchyroll locale to a human-readable track name.
+var LanguageNames = map[string]string{
 	"ja-JP":  "日本語",
 	"en-US":  "English",
 	"en-IN":  "English (India)",
@@ -29,9 +33,9 @@ var languageNames = map[string]string{
 	"th-TH":  "ไทย",
 }
 
-// languageCodes maps a Crunchyroll locale to its ISO 639-2 code, used for the
+// LanguageCodes maps a Crunchyroll locale to its ISO 639-2 code, used for the
 // ffmpeg "language" stream tag so media servers can select tracks correctly.
-var languageCodes = map[string]string{
+var LanguageCodes = map[string]string{
 	"ja-JP":  "jpn",
 	"en-US":  "eng",
 	"en-IN":  "eng",

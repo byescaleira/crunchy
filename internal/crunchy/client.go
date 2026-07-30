@@ -1,4 +1,9 @@
-package main
+// Package crunchy wraps the Crunchyroll HTTP API and the Widevine license
+// exchange. Client holds the per-session state that used to live in package
+// globals (token, device id, etp-rt, debug) plus the Doer used for every HTTP
+// request, so callers (CLI and server) share one authenticated client and
+// tests can substitute a fake Doer.
+package crunchy
 
 import (
 	"fmt"
@@ -23,9 +28,9 @@ type Doer interface {
 	Do(*http.Request) (*http.Response, error)
 }
 
-// CrunchyClient holds the per-session state that used to live in package globals
+// Client holds the per-session state that used to live in package globals
 // (token, device id, etp-rt, debug) plus the Doer used for every HTTP request.
-type CrunchyClient struct {
+type Client struct {
 	Doer     Doer
 	Token    string
 	EtpRt    string
@@ -35,9 +40,9 @@ type CrunchyClient struct {
 
 // NewClient builds a client with a fresh device id and fetches the initial
 // access token using etpRt. Returns an error if the token fetch fails (instead
-// of panicking, so main can report it cleanly).
-func NewClient(etpRt string, debug bool) (*CrunchyClient, error) {
-	c := &CrunchyClient{
+// of panicking, so callers can report it cleanly).
+func NewClient(etpRt string, debug bool) (*Client, error) {
+	c := &Client{
 		Doer:     sharedClient,
 		EtpRt:    etpRt,
 		DeviceID: uuid.NewString(),
@@ -54,11 +59,11 @@ func NewClient(etpRt string, debug bool) (*CrunchyClient, error) {
 // Do executes req through the Doer, refreshing the access token once on a 401.
 // The refreshed flag bounds the recursion to a single refresh so a
 // persistently-unauthorized request cannot loop forever.
-func (c *CrunchyClient) Do(req *http.Request) (*http.Response, error) {
+func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	return c.do(req, false)
 }
 
-func (c *CrunchyClient) do(req *http.Request, refreshed bool) (*http.Response, error) {
+func (c *Client) do(req *http.Request, refreshed bool) (*http.Response, error) {
 	resp, err := c.Doer.Do(req)
 	if err != nil {
 		return nil, err
@@ -77,12 +82,12 @@ func (c *CrunchyClient) do(req *http.Request, refreshed bool) (*http.Response, e
 	return resp, err
 }
 
-// crunchyRequest builds a request to a Crunchyroll endpoint with the User-Agent
+// CrunchyRequest builds a request to a Crunchyroll endpoint with the User-Agent
 // header every call duplicates, and the bearer token when auth is set. Callers
 // that need extra headers (Content-Type, X-Cr-*, Origin, Referer, cookies) add
 // them on the returned request. This preserves each call's exact wire headers —
 // only the UA (+ optional auth) boilerplate is shared.
-func (c *CrunchyClient) crunchyRequest(method, url string, body io.Reader, auth bool) (*http.Request, error) {
+func (c *Client) CrunchyRequest(method, url string, body io.Reader, auth bool) (*http.Request, error) {
 	req, err := http.NewRequest(method, url, body)
 	if err != nil {
 		return nil, err

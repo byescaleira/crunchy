@@ -1,4 +1,4 @@
-package main
+package crunchy
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"strings"
 )
 
+// CrunchyrollTokenResponse is the body of the auth/v1/token endpoint.
 type CrunchyrollTokenResponse struct {
 	AccessToken string `json:"access_token"`
 }
@@ -16,7 +17,7 @@ type CrunchyrollTokenResponse struct {
 // GetAccessToken fetches an access token from Crunchyroll using the etp-rt
 // cookie. It uses c.Doer.Do directly (not c.Do) so a 401 here cannot recurse into
 // another token refresh.
-func (c *CrunchyClient) GetAccessToken() (string, error) {
+func (c *Client) GetAccessToken() (string, error) {
 	body := url.Values{}
 	body.Set("device_id", c.DeviceID)
 	body.Set("device_type", "Firefox on Linux")

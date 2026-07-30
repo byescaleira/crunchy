@@ -1,3 +1,7 @@
+// crunchyroll-downloader is the original command-line downloader. It builds a
+// crunchy.Client, resolves the requested URL, and drives a download.Downloader
+// over it. Output is byte-identical to the pre-refactor CLI; the server binary
+// (cmd/crunchy-server) reuses the same internal packages.
 package main
 
 import (
@@ -6,6 +10,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"crunchyroll-downloader/internal/crunchy"
+	"crunchyroll-downloader/internal/download"
 )
 
 var (
@@ -30,77 +37,49 @@ func parseLangs(s string) []string {
 	return out
 }
 
-// parseContentURL extracts the content type ("watch" or "series") and the
-// content id from a Crunchyroll URL of the form
-// "https://www.crunchyroll.com/<type>/<id>[/<slug>]". It validates the id
-// length and the content type, returning the same messages processUrl used to
-// print. Extracted from processUrl so the server can reuse it and so the
-// validation (including the former &&-vs-|| bug) is unit-testable.
-func parseContentURL(url string) (contentType, contentId string, err error) {
-	parts := strings.Split(url, "/")
-	if len(parts) < 5 {
-		return "", "", fmt.Errorf("Invalid URL format: %s", url)
-	}
-	contentType = parts[3]
-	contentId = parts[4]
-	if len(contentId) < 9 || len(contentId) > 14 {
-		return "", "", fmt.Errorf("Invalid URL format: %s", url)
-	}
-	if contentType != "watch" && contentType != "series" {
-		return "", "", fmt.Errorf("Invalid URL (must be /watch/ or /series/): %s", url)
-	}
-	return contentType, contentId, nil
-}
-
-func processUrl(c *CrunchyClient, url string) {
-	contentType, contentId, err := parseContentURL(url)
+func processUrl(c *crunchy.Client, url string, d *download.Downloader, seasonNumber int) {
+	contentType, contentId, err := crunchy.ParseContentURL(url)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 
-	audioLangs := parseLangs(*audioLang)
-	if len(audioLangs) == 0 {
-		audioLangs = []string{"ja-JP"}
-	}
-	subsLangs := parseLangs(*subtitlesLang)
-
 	// The season/series API endpoints take a single preferred locale; use the
 	// primary (first) requested one. All dub versions are still listed per
 	// episode, so the other languages remain resolvable.
-	primaryAudio := audioLangs[0]
+	primaryAudio := d.AudioLangs[0]
 	primarySubs := "en-US"
-	if len(subsLangs) > 0 {
-		primarySubs = subsLangs[0]
+	if len(d.SubsLangs) > 0 {
+		primarySubs = d.SubsLangs[0]
 	}
 
 	if contentType == "watch" {
-		info := c.getEpisodeInfo(contentId)
-		downloadEpisode(c, contentId, info, audioLangs, subsLangs, videoQuality, audioQuality)
+		info := c.GetEpisodeInfo(contentId)
+		d.Episode(contentId, info)
 	} else {
-		seasons := c.getSeasons(contentId, primaryAudio, primarySubs)
+		seasons := c.GetSeasons(contentId, primaryAudio, primarySubs)
 
-		if *seasonNumber != 0 {
+		if seasonNumber != 0 {
 			var seasonId string
 			for _, season := range seasons {
-				if season.SeasonNumber == *seasonNumber {
+				if season.SeasonNumber == seasonNumber {
 					seasonId = season.ID
 					break
 				}
 			}
 			if seasonId == "" {
-				fmt.Printf("This anime has no season %v!\n", *seasonNumber)
+				fmt.Printf("This anime has no season %v!\n", seasonNumber)
 				return
 			}
 
-			episodes := c.getSeasonEpisodes(seasonId, primaryAudio, primarySubs)
-			downloadSeason(c, videoQuality, audioQuality, audioLangs, subsLangs, episodes)
+			episodes := c.GetSeasonEpisodes(seasonId, primaryAudio, primarySubs)
+			d.Season(episodes)
 		} else {
 			fmt.Print("No season number specified, downloading all seasons...\n")
 
 			for _, season := range seasons {
-				episodes := c.getSeasonEpisodes(season.ID, primaryAudio, primarySubs)
-				downloadSeason(c, videoQuality, audioQuality, audioLangs, subsLangs, episodes)
+				episodes := c.GetSeasonEpisodes(season.ID, primaryAudio, primarySubs)
+				d.Season(episodes)
 			}
 		}
 	}
@@ -121,10 +100,25 @@ func main() {
 		os.Exit(1)
 	}
 
-	client, err := NewClient(*etpRt, *debug)
+	client, err := crunchy.NewClient(*etpRt, *debug)
 	if err != nil {
 		fmt.Printf("Failed to get access token: %s\n", err)
 		os.Exit(1)
+	}
+
+	audioLangs := parseLangs(*audioLang)
+	if len(audioLangs) == 0 {
+		audioLangs = []string{"ja-JP"}
+	}
+	subsLangs := parseLangs(*subtitlesLang)
+
+	d := &download.Downloader{
+		Client:       client,
+		VideoQuality: *videoQuality,
+		AudioQuality: *audioQuality,
+		AudioLangs:   audioLangs,
+		SubsLangs:    subsLangs,
+		Debug:        *debug,
 	}
 
 	if *urlsFile != "" {
@@ -147,10 +141,10 @@ func main() {
 		fmt.Printf("Found %d URLs to download\n\n", len(urls))
 		for i, u := range urls {
 			fmt.Printf("=== [%d/%d] %s ===\n", i+1, len(urls), u)
-			processUrl(client, u)
+			processUrl(client, u, d, *seasonNumber)
 			fmt.Println()
 		}
 	} else {
-		processUrl(client, *url)
+		processUrl(client, *url, d, *seasonNumber)
 	}
 }

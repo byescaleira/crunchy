@@ -1,32 +1,16 @@
-package main
+package mux
 
 import (
 	"reflect"
 	"testing"
+
+	"crunchyroll-downloader/internal/media"
 )
 
-func TestTrackTitle(t *testing.T) {
-	tests := []struct {
-		locale, want string
-	}{
-		{"ja-JP", "日本語"},
-		{"en-US", "English"},
-		{"pt-BR", "Português (Brasil)"},
-		{"xx-ZZ", "xx-ZZ"}, // unknown locale falls back to raw
-		{"", ""},
-	}
-	for _, tc := range tests {
-		got := trackTitle(tc.locale)
-		if got != tc.want {
-			t.Errorf("trackTitle(%q) = %q, want %q", tc.locale, got, tc.want)
-		}
-	}
-}
-
-func epInfo(series, title string, season, episode int) EpisodeInfo {
-	return EpisodeInfo{
+func epInfo(series, title string, season, episode int) media.EpisodeInfo {
+	return media.EpisodeInfo{
 		Title: title,
-		EpisodeMetadata: EpisodeMetadata{
+		EpisodeMetadata: media.EpisodeMetadata{
 			SeriesTitle:   series,
 			SeasonNumber:  season,
 			EpisodeNumber: episode,
@@ -37,11 +21,11 @@ func epInfo(series, title string, season, episode int) EpisodeInfo {
 func TestBuildMergeArgs(t *testing.T) {
 	t.Run("one audio one sub", func(t *testing.T) {
 		videoFile := "v.mp4"
-		audio := []mediaTrack{{file: "a.m4a", locale: "ja-JP"}}
-		subs := []mediaTrack{{file: "s.ass", locale: "en-US"}}
+		audio := []MediaTrack{{File: "a.m4a", Locale: "ja-JP"}}
+		subs := []MediaTrack{{File: "s.ass", Locale: "en-US"}}
 		info := epInfo("Series", "Ep", 1, 2)
 
-		got := buildMergeArgs(videoFile, audio, subs, "out.mkv", info)
+		got := BuildMergeArgs(videoFile, audio, subs, "out.mkv", info)
 		want := []string{
 			"-i", "v.mp4",
 			"-i", "a.m4a",
@@ -61,19 +45,19 @@ func TestBuildMergeArgs(t *testing.T) {
 			"out.mkv",
 		}
 		if !reflect.DeepEqual(got, want) {
-			t.Errorf("buildMergeArgs mismatch:\ngot:  %v\nwant: %v", got, want)
+			t.Errorf("BuildMergeArgs mismatch:\ngot:  %v\nwant: %v", got, want)
 		}
 	})
 
 	t.Run("two audios no subs", func(t *testing.T) {
 		videoFile := "v.mp4"
-		audio := []mediaTrack{
-			{file: "a1.m4a", locale: "ja-JP"},
-			{file: "a2.m4a", locale: "en-US"},
+		audio := []MediaTrack{
+			{File: "a1.m4a", Locale: "ja-JP"},
+			{File: "a2.m4a", Locale: "en-US"},
 		}
 		info := epInfo("Series", "Ep", 3, 4)
 
-		got := buildMergeArgs(videoFile, audio, nil, "out.mkv", info)
+		got := BuildMergeArgs(videoFile, audio, nil, "out.mkv", info)
 		want := []string{
 			"-i", "v.mp4",
 			"-i", "a1.m4a",
@@ -93,7 +77,7 @@ func TestBuildMergeArgs(t *testing.T) {
 			"out.mkv",
 		}
 		if !reflect.DeepEqual(got, want) {
-			t.Errorf("buildMergeArgs mismatch:\ngot:  %v\nwant: %v", got, want)
+			t.Errorf("BuildMergeArgs mismatch:\ngot:  %v\nwant: %v", got, want)
 		}
 	})
 }

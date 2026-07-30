@@ -1,41 +1,49 @@
-package main
+// Package manifest contains pure helpers for parsing and inspecting DASH
+// manifests (go-mpd): decoding manifest bytes, locating the PSSH, resolving a
+// representation's base URL for a requested quality, finding an adaptation set
+// by content type, and expanding a SegmentTimeline into segment numbers.
+// Nothing here performs I/O — the HTTP fetch lives in the crunchy package.
+package manifest
 
 import (
 	"fmt"
-	"io"
-	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/unki2aut/go-mpd"
 )
 
-func (c *CrunchyClient) parseManifest(url string) *mpd.MPD {
-	req, err := c.crunchyRequest(http.MethodGet, url, nil, true)
-	if err != nil {
-		panic(err)
+// ParseMPD decodes raw manifest bytes into an *mpd.MPD.
+func ParseMPD(body []byte) (*mpd.MPD, error) {
+	m := new(mpd.MPD)
+	if err := m.Decode(body); err != nil {
+		return nil, err
 	}
-	resp, err := c.Do(req)
-	if err != nil {
-		panic(err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		panic(err)
-	}
-	mpd := new(mpd.MPD)
-	mpd.Decode(body)
-
-	if c.Debug {
-		fmt.Printf("\n%s\n", string(body))
-	}
-
-	return mpd
+	return m, nil
 }
 
-func getBaseUrl(set *mpd.AdaptationSet, isVideoSet bool, quality string) (*string, *string) {
+// GetPSSH finds the PSSH in the MPD manifest by scanning every adaptation set
+// in the first period, instead of assuming it lives at AdaptationSets[0].
+func GetPSSH(m *mpd.MPD) *string {
+	if len(m.Period) == 0 {
+		return nil
+	}
+	for _, set := range m.Period[0].AdaptationSets {
+		for _, contentProtection := range set.ContentProtections {
+			if contentProtection.CencPSSH != nil {
+				return contentProtection.CencPSSH
+			}
+		}
+	}
+
+	return nil
+}
+
+// GetBaseURL resolves the base URL and representation id for a requested
+// quality within an adaptation set. For video it matches the representation
+// height; for audio it matches by id substring or by bandwidth bucket. When no
+// representation matches it defers to the first one (printing a notice).
+func GetBaseURL(set *mpd.AdaptationSet, isVideoSet bool, quality string) (*string, *string) {
 	for _, representation := range set.Representations {
 		if isVideoSet {
 			toInt, _ := strconv.ParseInt(strings.ReplaceAll(quality, "p", ""), 10, 64)
@@ -69,16 +77,16 @@ func getBaseUrl(set *mpd.AdaptationSet, isVideoSet bool, quality string) (*strin
 	return &firstRep.BaseURL[0].Value, firstRep.ID
 }
 
-// findAdaptationSet returns the first adaptation set of the given type
+// FindAdaptationSet returns the first adaptation set of the given type
 // ("video" or "audio") in the first period, matched by mimeType/contentType.
 // This replaces hard-coded indices (AdaptationSets[0]/[1]) which break on
 // manifests whose adaptation sets are ordered differently or come in a
 // different count (e.g. movies/specials).
-func findAdaptationSet(mpd *mpd.MPD, want string) (*mpd.AdaptationSet, error) {
-	if len(mpd.Period) == 0 {
+func FindAdaptationSet(m *mpd.MPD, want string) (*mpd.AdaptationSet, error) {
+	if len(m.Period) == 0 {
 		return nil, fmt.Errorf("manifest has no Period")
 	}
-	for _, set := range mpd.Period[0].AdaptationSets {
+	for _, set := range m.Period[0].AdaptationSets {
 		if strings.HasPrefix(set.MimeType, want) {
 			return set, nil
 		}
@@ -89,7 +97,10 @@ func findAdaptationSet(mpd *mpd.MPD, want string) (*mpd.AdaptationSet, error) {
 	return nil, fmt.Errorf("no %s adaptation set found in manifest", want)
 }
 
-func expandTimeline(timeline []*mpd.SegmentTimelineS, startNumber int64) []int64 {
+// ExpandTimeline expands a SegmentTimeline's S entries (each with an optional
+// repeat count R) into the full ordered list of segment numbers, starting at
+// startNumber.
+func ExpandTimeline(timeline []*mpd.SegmentTimelineS, startNumber int64) []int64 {
 	var result []int64
 	segNum := startNumber
 

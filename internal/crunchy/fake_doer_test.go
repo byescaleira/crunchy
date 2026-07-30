@@ -1,4 +1,4 @@
-package main
+package crunchy
 
 import (
 	"bytes"
@@ -39,7 +39,7 @@ func TestGetAccessToken_Success(t *testing.T) {
 	doer := &fakeDoer{respond: func(req *http.Request) (*http.Response, error) {
 		return bodyResp(200, `{"access_token":"abc123"}`), nil
 	}}
-	c := &CrunchyClient{Doer: doer, DeviceID: "dev", EtpRt: "etp"}
+	c := &Client{Doer: doer, DeviceID: "dev", EtpRt: "etp"}
 	tok, err := c.GetAccessToken()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -67,7 +67,7 @@ func TestGetAccessToken_UnmarshalError(t *testing.T) {
 	doer := &fakeDoer{respond: func(req *http.Request) (*http.Response, error) {
 		return bodyResp(200, `not json`), nil
 	}}
-	c := &CrunchyClient{Doer: doer, DeviceID: "dev", EtpRt: "etp"}
+	c := &Client{Doer: doer, DeviceID: "dev", EtpRt: "etp"}
 	if _, err := c.GetAccessToken(); err == nil {
 		t.Fatal("expected an unmarshal error, got nil")
 	}
@@ -85,7 +85,7 @@ func TestDo_RefreshesOnceOn401(t *testing.T) {
 		}
 		return bodyResp(200, "ok"), nil
 	}}
-	c := &CrunchyClient{Doer: doer, Token: "old"}
+	c := &Client{Doer: doer, Token: "old"}
 
 	req, _ := http.NewRequest(http.MethodGet, "https://www.crunchyroll.com/playback/v3/G4PH0WXVJ/web/firefox/play", nil)
 	resp, err := c.Do(req)
@@ -112,7 +112,7 @@ func TestDo_NoInfiniteRefreshLoop(t *testing.T) {
 		playbackCalls++
 		return bodyResp(http.StatusUnauthorized, ""), nil // always 401
 	}}
-	c := &CrunchyClient{Doer: doer, Token: "old"}
+	c := &Client{Doer: doer, Token: "old"}
 
 	req, _ := http.NewRequest(http.MethodGet, "https://www.crunchyroll.com/playback/v3/G4PH0WXVJ/web/firefox/play", nil)
 	resp, err := c.Do(req)

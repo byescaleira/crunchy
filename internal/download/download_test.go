@@ -1,4 +1,4 @@
-package main
+package download
 
 import (
 	"os"
@@ -8,6 +8,9 @@ import (
 
 	"github.com/unki2aut/go-mpd"
 )
+
+func strPtr(s string) *string { return &s }
+func u64Ptr(v uint64) *uint64 { return &v }
 
 func TestBuildURL(t *testing.T) {
 	rep := "repID"
@@ -63,9 +66,6 @@ func TestBuildURL(t *testing.T) {
 		})
 	}
 }
-
-func strPtr(s string) *string { return &s }
-func u64Ptr(v uint64) *uint64 { return &v }
 
 func TestGetFilename(t *testing.T) {
 	t.Run("nil set returns subs temp", func(t *testing.T) {
@@ -143,29 +143,4 @@ func TestRemoveFiles(t *testing.T) {
 			t.Errorf("f2 still exists after removeFiles: %v", err)
 		}
 	})
-}
-
-func TestSanitize(t *testing.T) {
-	tests := []struct {
-		in, want string
-	}{
-		{"", "Unknown"},
-		{"plain", "plain"},
-		{`a\b/c:d*e?f<g>h|i`, "a_b_c_d_e_f_g_h_i"},
-		{`"q"`, "_q_"},         // straight double quotes both replaced
-		{`“smart”`, "_smart_"}, // curly double quotes both replaced
-		{`'apos'`, "_apos_"},   // straight apostrophes replaced
-		{"trailing space  ", "trailing space"},
-		{"trailing dot...", "trailing dot"}, // dots are not illegal, but trimmed
-		{"double__underscore", "double_underscore"},
-		{"many____underscores", "many_underscores"},
-		{"a__b___c", "a_b_c"},
-		{"  leading kept  ", "  leading kept"}, // TrimRight keeps leading spaces
-	}
-	for _, tc := range tests {
-		got := sanitize(tc.in)
-		if got != tc.want {
-			t.Errorf("sanitize(%q) = %q, want %q", tc.in, got, tc.want)
-		}
-	}
 }

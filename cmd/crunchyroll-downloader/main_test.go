@@ -18,7 +18,7 @@ func TestParseLangs(t *testing.T) {
 		{",", nil},  // only empties
 		{"  ", nil}, // whitespace only
 		{"ja-JP,", []string{"ja-JP"}},
-		{"all", []string{"all"}}, // "all" is only special-cased later in downloadEpisode
+		{"all", []string{"all"}}, // "all" is only special-cased later in Episode
 		{",,ja-JP,,en-US,,", []string{"ja-JP", "en-US"}},
 	}
 	for _, tc := range tests {

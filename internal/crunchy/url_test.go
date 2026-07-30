@@ -1,4 +1,4 @@
-package main
+package crunchy
 
 import (
 	"strings"
@@ -53,10 +53,10 @@ func TestParseContentURL(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			ct, id, err := parseContentURL(tc.url)
+			ct, id, err := ParseContentURL(tc.url)
 			if tc.wantErr {
 				if err == nil {
-					t.Fatalf("parseContentURL(%q) = (%q,%q,nil), want error", tc.url, ct, id)
+					t.Fatalf("ParseContentURL(%q) = (%q,%q,nil), want error", tc.url, ct, id)
 				}
 				if tc.errContains != "" && !strings.Contains(err.Error(), tc.errContains) {
 					t.Errorf("err = %q, want substring %q", err.Error(), tc.errContains)
@@ -64,7 +64,7 @@ func TestParseContentURL(t *testing.T) {
 				return
 			}
 			if err != nil {
-				t.Fatalf("parseContentURL(%q) unexpected error: %v", tc.url, err)
+				t.Fatalf("ParseContentURL(%q) unexpected error: %v", tc.url, err)
 			}
 			if ct != tc.wantType {
 				t.Errorf("contentType = %q, want %q", ct, tc.wantType)

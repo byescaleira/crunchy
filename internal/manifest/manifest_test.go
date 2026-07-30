@@ -1,4 +1,4 @@
-package main
+package manifest
 
 import (
 	"io"
@@ -9,7 +9,11 @@ import (
 	"github.com/unki2aut/go-mpd"
 )
 
-func i64Ptr(v int64) *int64 { return &v }
+func strPtr(s string) *string  { return &s }
+func u64Ptr(v uint64) *uint64  { return &v }
+func i64Ptr(v int64) *int64    { return &v }
+func psshPtr(s string) *string { return &s }
+func ctPtr(s string) *string   { return &s }
 
 // captureStdout runs fn with os.Stdout redirected to a pipe and returns the
 // captured text. Used to keep fmt.Printf fallback messages out of test output.
@@ -50,9 +54,9 @@ func TestExpandTimeline(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := expandTimeline(tc.timeline, tc.start)
+			got := ExpandTimeline(tc.timeline, tc.start)
 			if !reflect.DeepEqual(got, tc.want) {
-				t.Errorf("expandTimeline = %v, want %v", got, tc.want)
+				t.Errorf("ExpandTimeline = %v, want %v", got, tc.want)
 			}
 		})
 	}
@@ -64,7 +68,7 @@ func TestFindAdaptationSet(t *testing.T) {
 	contentTypeAudio := "audio"
 
 	t.Run("no period returns error", func(t *testing.T) {
-		_, err := findAdaptationSet(&mpd.MPD{}, "audio")
+		_, err := FindAdaptationSet(&mpd.MPD{}, "audio")
 		if err == nil {
 			t.Fatal("expected error for empty manifest")
 		}
@@ -77,7 +81,7 @@ func TestFindAdaptationSet(t *testing.T) {
 				{MimeType: audioMime},
 			},
 		}}}
-		got, err := findAdaptationSet(m, "audio")
+		got, err := FindAdaptationSet(m, "audio")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -90,10 +94,10 @@ func TestFindAdaptationSet(t *testing.T) {
 		m := &mpd.MPD{Period: []*mpd.Period{{
 			AdaptationSets: []*mpd.AdaptationSet{
 				{MimeType: "video/mp4"},
-				{ContentType: &contentTypeAudio},
+				{ContentType: ctPtr(contentTypeAudio)},
 			},
 		}}}
-		got, err := findAdaptationSet(m, "audio")
+		got, err := FindAdaptationSet(m, "audio")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -106,7 +110,7 @@ func TestFindAdaptationSet(t *testing.T) {
 		m := &mpd.MPD{Period: []*mpd.Period{{
 			AdaptationSets: []*mpd.AdaptationSet{{MimeType: "video/mp4"}},
 		}}}
-		if _, err := findAdaptationSet(m, "audio"); err == nil {
+		if _, err := FindAdaptationSet(m, "audio"); err == nil {
 			t.Fatal("expected error when no audio set present")
 		}
 	})
@@ -120,7 +124,7 @@ func TestGetBaseUrl(t *testing.T) {
 				{ID: strPtr("v1"), Height: u64Ptr(1080), BaseURL: []*mpd.BaseURL{{Value: "1080"}}},
 			},
 		}
-		base, id := getBaseUrl(set, true, "1080p")
+		base, id := GetBaseURL(set, true, "1080p")
 		if base == nil || *base != "1080" {
 			t.Errorf("video base = %v, want 1080", base)
 		}
@@ -136,7 +140,7 @@ func TestGetBaseUrl(t *testing.T) {
 				{ID: strPtr("audio/ja-JP-192"), BaseURL: []*mpd.BaseURL{{Value: "a192"}}},
 			},
 		}
-		base, id := getBaseUrl(set, false, "ja-JP-192")
+		base, id := GetBaseURL(set, false, "ja-JP-192")
 		if base == nil || *base != "a192" {
 			t.Errorf("audio base = %v, want a192", base)
 		}
@@ -152,7 +156,7 @@ func TestGetBaseUrl(t *testing.T) {
 				{ID: strPtr("rep-192"), Bandwidth: u64Ptr(192002), BaseURL: []*mpd.BaseURL{{Value: "a192"}}},
 			},
 		}
-		base, id := getBaseUrl(set, false, "192k")
+		base, id := GetBaseURL(set, false, "192k")
 		if base == nil || *base != "a192" {
 			t.Errorf("bandwidth base = %v, want a192", base)
 		}
@@ -169,7 +173,7 @@ func TestGetBaseUrl(t *testing.T) {
 		}
 		var base, id *string
 		out := captureStdout(t, func() {
-			base, id = getBaseUrl(set, true, "2160p")
+			base, id = GetBaseURL(set, true, "2160p")
 		})
 		if base == nil || *base != "first" {
 			t.Errorf("fallback base = %v, want first", base)
@@ -184,9 +188,41 @@ func TestGetBaseUrl(t *testing.T) {
 
 	t.Run("empty reps returns nil nil", func(t *testing.T) {
 		set := &mpd.AdaptationSet{}
-		base, id := getBaseUrl(set, true, "1080p")
+		base, id := GetBaseURL(set, true, "1080p")
 		if base != nil || id != nil {
 			t.Errorf("empty reps = (%v,%v), want (nil,nil)", base, id)
+		}
+	})
+}
+
+func TestGetPSSH(t *testing.T) {
+	t.Run("no period returns nil", func(t *testing.T) {
+		if got := GetPSSH(&mpd.MPD{}); got != nil {
+			t.Errorf("GetPSSH(empty) = %v, want nil", got)
+		}
+	})
+
+	t.Run("finds pssh in a non-first adaptation set", func(t *testing.T) {
+		m := &mpd.MPD{Period: []*mpd.Period{{
+			AdaptationSets: []*mpd.AdaptationSet{
+				{ContentProtections: []mpd.Descriptor{{}}}, // no pssh
+				{ContentProtections: []mpd.Descriptor{{CencPSSH: psshPtr("AAAA")}}},
+			},
+		}}}
+		got := GetPSSH(m)
+		if got == nil || *got != "AAAA" {
+			t.Errorf("GetPSSH = %v, want AAAA", got)
+		}
+	})
+
+	t.Run("nil when no cenc pssh anywhere", func(t *testing.T) {
+		m := &mpd.MPD{Period: []*mpd.Period{{
+			AdaptationSets: []*mpd.AdaptationSet{
+				{ContentProtections: []mpd.Descriptor{{SchemeIDURI: strPtr("widevine")}}},
+			},
+		}}}
+		if got := GetPSSH(m); got != nil {
+			t.Errorf("GetPSSH = %v, want nil", got)
 		}
 	})
 }

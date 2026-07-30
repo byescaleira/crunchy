@@ -1,38 +1,36 @@
-package main
+// Package mux merges the downloaded video, audio and subtitle tracks into a
+// single MKV via ffmpeg. BuildMergeArgs is extracted so the load-bearing
+// argument order/indices/dispositions can be unit-tested without invoking
+// ffmpeg.
+package mux
 
 import (
 	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
+
+	"crunchyroll-downloader/internal/media"
+	"crunchyroll-downloader/internal/output"
 )
 
-// mediaTrack pairs a downloaded temporary file with the locale it represents.
-type mediaTrack struct {
-	file   string
-	locale string
+// MediaTrack pairs a downloaded temporary file with the locale it represents.
+type MediaTrack struct {
+	File   string
+	Locale string
 }
 
-// trackTitle returns a human-readable track name for a locale, falling back to
-// the raw locale when it isn't in the known list.
-func trackTitle(locale string) string {
-	if name, ok := languageNames[locale]; ok {
-		return name
-	}
-	return locale
-}
-
-// buildMergeArgs constructs the ffmpeg argument list that merges the video, all
-// audio tracks and all subtitle tracks into a single MKV. Extracted from
-// mergeEverything so the load-bearing arg order/indices/dispositions can be
-// unit-tested without invoking ffmpeg.
-func buildMergeArgs(videoFile string, audioTracks, subTracks []mediaTrack, outputFile string, info EpisodeInfo) []string {
+// BuildMergeArgs constructs the ffmpeg argument list that merges the video, all
+// audio tracks and all subtitle tracks into a single MKV. Extracted from Merge
+// so the load-bearing arg order/indices/dispositions can be unit-tested
+// without invoking ffmpeg.
+func BuildMergeArgs(videoFile string, audioTracks, subTracks []MediaTrack, outputFile string, info media.EpisodeInfo) []string {
 	args := []string{"-i", videoFile}
 	for _, audio := range audioTracks {
-		args = append(args, "-i", audio.file)
+		args = append(args, "-i", audio.File)
 	}
 	for _, sub := range subTracks {
-		args = append(args, "-i", sub.file)
+		args = append(args, "-i", sub.File)
 	}
 
 	// Map every input stream explicitly; without this ffmpeg keeps only one
@@ -52,14 +50,14 @@ func buildMergeArgs(videoFile string, audioTracks, subTracks []mediaTrack, outpu
 
 	for i, audio := range audioTracks {
 		args = append(args,
-			fmt.Sprintf("-metadata:s:a:%d", i), "language="+languageCodes[audio.locale],
-			fmt.Sprintf("-metadata:s:a:%d", i), "title="+trackTitle(audio.locale),
+			fmt.Sprintf("-metadata:s:a:%d", i), "language="+output.LanguageCodes[audio.Locale],
+			fmt.Sprintf("-metadata:s:a:%d", i), "title="+output.TrackTitle(audio.Locale),
 		)
 	}
 	for j, sub := range subTracks {
 		args = append(args,
-			fmt.Sprintf("-metadata:s:s:%d", j), "language="+languageCodes[sub.locale],
-			fmt.Sprintf("-metadata:s:s:%d", j), "title="+trackTitle(sub.locale),
+			fmt.Sprintf("-metadata:s:s:%d", j), "language="+output.LanguageCodes[sub.Locale],
+			fmt.Sprintf("-metadata:s:s:%d", j), "title="+output.TrackTitle(sub.Locale),
 		)
 	}
 
@@ -92,10 +90,10 @@ func buildMergeArgs(videoFile string, audioTracks, subTracks []mediaTrack, outpu
 	return args
 }
 
-// mergeEverything merges the video, all audio tracks and all subtitle tracks
-// into a single MKV container.
-func mergeEverything(videoFile string, audioTracks, subTracks []mediaTrack, outputFile string, info EpisodeInfo) {
-	args := buildMergeArgs(videoFile, audioTracks, subTracks, outputFile, info)
+// Merge merges the video, all audio tracks and all subtitle tracks into a
+// single MKV container.
+func Merge(videoFile string, audioTracks, subTracks []MediaTrack, outputFile string, info media.EpisodeInfo) {
+	args := BuildMergeArgs(videoFile, audioTracks, subTracks, outputFile, info)
 
 	cmd := exec.Command("ffmpeg", args...)
 	var stderr bytes.Buffer
@@ -108,10 +106,10 @@ func mergeEverything(videoFile string, audioTracks, subTracks []mediaTrack, outp
 	// Remove temporary files
 	_ = os.Remove(videoFile)
 	for _, audio := range audioTracks {
-		_ = os.Remove(audio.file)
+		_ = os.Remove(audio.File)
 	}
 	for _, sub := range subTracks {
-		_ = os.Remove(sub.file)
+		_ = os.Remove(sub.File)
 	}
 
 	fmt.Printf("\nDownload finished! Output file: %s\n\n", outputFile)
