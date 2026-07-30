@@ -76,3 +76,28 @@ func TestLanguageMaps(t *testing.T) {
 		}
 	})
 }
+
+func TestBuildEpisodeFilename(t *testing.T) {
+	tests := []struct {
+		name           string
+		season, episode int
+		title, quality, ext string
+		want           string
+	}{
+		{"basic", 1, 5, "The Final Episode", "1080p", ".mkv", "01.05 The Final Episode (1080p).mkv"},
+		{"mp4", 2, 12, "Pilot", "720p", ".mp4", "02.12 Pilot (720p).mp4"},
+		{"double-digit season/episode", 10, 3, "Finale", "1080p", ".mkv", "10.03 Finale (1080p).mkv"},
+		{"double-digit episode", 1, 15, "Halfway", "480p", ".mkv", "01.15 Halfway (480p).mkv"},
+		{"sanitized title", 1, 1, `A/B:C*D?`, "1080p", ".mkv", "01.01 A_B_C_D_ (1080p).mkv"},
+		{"empty title becomes Unknown", 1, 1, "", "1080p", ".mkv", "01.01 Unknown (1080p).mkv"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := BuildEpisodeFilename(tc.season, tc.episode, tc.title, tc.quality, tc.ext)
+			if got != tc.want {
+				t.Errorf("BuildEpisodeFilename(%d,%d,%q,%q,%q) = %q, want %q",
+					tc.season, tc.episode, tc.title, tc.quality, tc.ext, got, tc.want)
+			}
+		})
+	}
+}

@@ -380,11 +380,36 @@ func TestJobsList(t *testing.T) {
 	}
 }
 
-// TestSSE_JobEvents enqueues a job that publishes a segment and a message, then
-// connects to its SSE stream and asserts the events arrive in order.
+// TestJobsList_PhaseRail asserts the job card renders the phase rail chips, the
+// percentage span, and the phase-label line that the SSE script drives.
+func TestJobsList_PhaseRail(t *testing.T) {
+	s := newTestServer(t)
+	s.manager.Enqueue("ep1", func(download.Progress) error { return nil })
+	h := s.Handler()
+	r, w := get("/jobs/list")
+	got := body(t, h, r, w)
+	for _, want := range []string{
+		`data-phase="subtitles"`,
+		`data-phase="audio"`,
+		`data-phase="video"`,
+		`data-phase="mux"`,
+		">SUB<",
+		">AUDIO<",
+		">VIDEO<",
+		">MUX<",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("phase rail missing %q; got: %s", want, got)
+		}
+	}
+}
+
+// TestSSE_JobEvents enqueues a job that announces a phase, publishes a segment
+// and a message, then connects to its SSE stream and asserts the events arrive.
 func TestSSE_JobEvents(t *testing.T) {
 	s := newTestServer(t)
 	task := func(p download.Progress) error {
+		p.Phase("audio")
 		p.Segment(1, 2)
 		p.Printf("Downloading ja-JP audio...\n")
 		return nil
@@ -398,11 +423,16 @@ func TestSSE_JobEvents(t *testing.T) {
 		t.Fatalf("SSE status %d, body %s", w.Code, w.Body.String())
 	}
 	got := w.Body.String()
+	// Phase("audio") jumps the bar to its base (5/100); Segment(1,2) maps to
+	// 5 + 30*1/2 = 20/100. The terminal status event is emitted before done.
 	for _, want := range []string{
 		"event: status",
+		"event: phase",
+		`"phase":"audio"`,
 		"event: segment",
-		`"done":1`,
-		`"total":2`,
+		`"done":5`,
+		`"done":20`,
+		`"total":100`,
 		"event: done",
 	} {
 		if !strings.Contains(got, want) {

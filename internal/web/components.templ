@@ -1,6 +1,8 @@
 package web
 
 import (
+	"fmt"
+
 	"crunchyroll-downloader/internal/jobs"
 	"crunchyroll-downloader/internal/media"
 )
@@ -176,21 +178,42 @@ templ statusBadge(s jobs.Status) {
 	<span class={ "badge " + statusBadgeClass(string(s)) + " badge-sm font-mono" }>{ string(s) }</span>
 }
 
-// progressBar renders a progress bar for a job from its last segment tick.
-// Indeterminate (no segments yet) shows an empty bar.
-templ progressBar(j *jobs.Job) {
+// jobProgress renders a job's live progress: a phase-weighted ember bar with a
+// mono percentage, a four-step phase rail (SUB · AUDIO · VIDEO · MUX) that lights
+// up as each download phase starts, and a phase-label line. The bar climbs 0-90
+// across subtitles/audio/video, sits at 90 through mux, and the done event fills
+// it to 100. The phase rail is the signature element: completed chips dim-fill
+// ember, the active chip pulses (crdl-dot), future chips stay muted.
+templ jobProgress(j *jobs.Job) {
 	{{
 		done, total := j.Segment()
 		pct := 0
 		if total > 0 {
 			pct = done * 100 / total
 		}
+		phase := j.Phase()
+		label := phaseLabel(phase)
+		if label == "" {
+			switch string(j.Status()) {
+			case "done":
+				label = "Done"
+			case "error":
+				label = "Failed"
+			default:
+				label = "queued"
+			}
+		}
 	}}
-	if total > 0 {
-		<progress class="progress progress-primary w-full" value={ pct } max="100"></progress>
-	} else {
-		<progress class="progress progress-primary w-full"></progress>
-	}
+	<div class="flex items-center gap-2">
+		<progress class="progress progress-primary flex-1" value={ pct } max="100"></progress>
+		<span class="font-mono text-xs text-base-content/60 tabular-nums w-10 text-right" id={ "job-" + j.ID + "-pct" }>{ fmt.Sprintf("%d%%", pct) }</span>
+	</div>
+	<div class="flex items-center gap-1.5 mt-1.5">
+		for _, key := range phaseOrder {
+			<span class={ phaseChipClass(string(j.Status()), phase, key) } data-phase={ key } id={ "job-" + j.ID + "-chip-" + key }>{ phaseChipLabel(key) }</span>
+		}
+	</div>
+	<div class="font-mono text-xs text-primary/70 mt-1" id={ "job-" + j.ID + "-phase" }>{ label }</div>
 }
 
 // jobCard renders one job as a transmission-log line: a pulsing ember status dot
@@ -209,7 +232,7 @@ templ jobCard(j *jobs.Job) {
 			<span class={ "badge " + statusBadgeClass(string(j.Status())) + " badge-sm font-mono shrink-0" } id={ "job-" + j.ID + "-status" }>{ string(j.Status()) }</span>
 		</div>
 		<div id={ "job-" + j.ID + "-progress" } class="pl-4">
-			@progressBar(j)
+			@jobProgress(j)
 		</div>
 		<div id={ "job-" + j.ID + "-error" } class="pl-4">
 			if j.Status() == "error" {
@@ -242,5 +265,80 @@ func statusPulseClass(s jobs.Status) string {
 		return " crdl-dot"
 	default:
 		return ""
+	}
+}
+
+// phaseOrder is the fixed download-phase order shown on the jobs phase rail.
+var phaseOrder = []string{"subtitles", "audio", "video", "mux"}
+
+// phaseLabel returns the human label for a download phase, or "" if unknown.
+func phaseLabel(phase string) string {
+	switch phase {
+	case "subtitles":
+		return "Subtitles"
+	case "audio":
+		return "Audio"
+	case "video":
+		return "Video"
+	case "mux":
+		return "Muxing"
+	}
+	return ""
+}
+
+// phaseChipLabel returns the short rail chip text for a phase key.
+func phaseChipLabel(key string) string {
+	switch key {
+	case "subtitles":
+		return "SUB"
+	case "audio":
+		return "AUDIO"
+	case "video":
+		return "VIDEO"
+	case "mux":
+		return "MUX"
+	}
+	return key
+}
+
+// phaseIndex returns the position of a phase in phaseOrder, or -1 if unknown.
+func phaseIndex(phase string) int {
+	for i, p := range phaseOrder {
+		if p == phase {
+			return i
+		}
+	}
+	return -1
+}
+
+// phaseChipClass returns the rail chip class for a phase key given the job's
+// status and current phase. Completed chips dim-fill ember, the active chip
+// pulses (crdl-dot), future chips stay muted. A done job shows every chip
+// completed; an error job shows the phases that already ran as completed and
+// leaves the rest muted (it failed mid-phase).
+func phaseChipClass(status, current, key string) string {
+	const base = "inline-flex items-center px-1.5 py-0.5 rounded-field font-mono text-[10px] uppercase tracking-wider border transition-colors "
+	const done = "border-primary/40 text-primary bg-primary/10"
+	const active = "border-primary text-primary-content bg-primary crdl-dot"
+	const pending = "border-base-300 text-base-content/40"
+
+	ki := phaseIndex(key)
+	if ki < 0 {
+		return base + pending
+	}
+	if status == "done" {
+		return base + done
+	}
+	ci := phaseIndex(current)
+	if ci < 0 {
+		return base + pending
+	}
+	switch {
+	case ki < ci:
+		return base + done
+	case ki == ci:
+		return base + active
+	default:
+		return base + pending
 	}
 }

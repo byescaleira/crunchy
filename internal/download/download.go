@@ -388,7 +388,6 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) error
 	d.ensureSeams()
 
 	cleanSeriesTitle := output.Sanitize(info.EpisodeMetadata.SeriesTitle)
-	cleanEpisodeTitle := output.Sanitize(info.Title)
 
 	// OutputDir lets the server direct downloads into a user-chosen folder; the
 	// CLI leaves it empty so the series directory is created relative to the CWD,
@@ -405,11 +404,14 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) error
 	if d.Format == "mp4" {
 		ext = ".mp4"
 	}
-	outputFile := filepath.Join(seriesDir, fmt.Sprintf("%s S%02dE%02d - %s [%s]%s",
-		cleanSeriesTitle,
+	// Filename: "<season>.<episode> <title> (<quality>).<ext>" under the series
+	// directory. The requested quality string (not the manifest height) is used so
+	// the name is known before the manifest is fetched and the skip-check below
+	// stays valid.
+	outputFile := filepath.Join(seriesDir, output.BuildEpisodeFilename(
 		info.EpisodeMetadata.SeasonNumber,
 		info.EpisodeMetadata.EpisodeNumber,
-		cleanEpisodeTitle,
+		info.Title,
 		*videoQuality,
 		ext,
 	))
@@ -525,6 +527,9 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) error
 	}
 
 	var subTracks []mux.MediaTrack
+	if len(subsLangs) > 0 {
+		d.Progress.Phase("subtitles")
+	}
 	for _, locale := range subsLangs {
 		d.Progress.Printf("Downloading subtitles for %s...\n", output.TrackTitle(locale))
 		f, err := d.downloadSubtitles(firstEpisode.Subtitles[locale].URL)
@@ -570,6 +575,7 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) error
 			return fmt.Errorf("audio set: %s", err)
 		}
 		d.Progress.Printf("Downloading %s audio...\n", output.TrackTitle(version.locale))
+		d.Progress.Phase("audio")
 		audioBaseUrl, audioRepresentationId := manifest.GetBaseURL(audioSet, false, *audioQuality)
 		if audioBaseUrl == nil {
 			return fmt.Errorf("failed to get the audio base URL for %s, maybe the audio quality you entered is wrong?", version.locale)
@@ -587,6 +593,7 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) error
 			if err != nil {
 				return fmt.Errorf("video set: %s", err)
 			}
+			d.Progress.Phase("video")
 			d.Progress.Printf("Downloading video...\n")
 			baseUrl, representationId := manifest.GetBaseURL(videoSet, true, *videoQuality)
 			if baseUrl == nil {
@@ -604,6 +611,7 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) error
 		delete(activeStreams, version.contentId)
 	}
 
+	d.Progress.Phase("mux")
 	return d.merge(videoFile, audioTracks, subTracks, outputFile, coverFile, d.Format, info)
 }
 

@@ -34,19 +34,70 @@ const (
 	EventStatus  EventType = "status"  // a Status transition
 	EventMessage EventType = "message" // a Printf progress line
 	EventSegment EventType = "segment" // a Segment(done, total) tick
+	EventPhase   EventType = "phase"   // a Phase(name) transition (subtitles/audio/video/mux)
 	EventDone    EventType = "done"    // terminal: the job finished (success or error)
 	EventError   EventType = "error"   // terminal error detail
 )
 
 // Event is one update published to a job's subscribers. The authoritative job
-// state lives on the Job struct (Status, Error, segment counts); Events are the
-// live feed, so a subscriber that drops some can still read the final state.
+// state lives on the Job struct (Status, Error, segment counts, phase); Events
+// are the live feed, so a subscriber that drops some can still read the final
+// state.
 type Event struct {
 	Type    EventType
 	Status  Status
 	Message string
+	Phase   string
 	Done    int
 	Total   int
+}
+
+// phaseRange is the [base, base+span] slice of the overall 0-100 progress bar
+// that a download phase owns. The ranges telescope to 100:
+// subtitles 0-5, audio 5-35, video 35-90, mux 90-100.
+type phaseRange struct {
+	base int
+	span int
+}
+
+var phaseRanges = map[string]phaseRange{
+	"subtitles": {0, 5},
+	"audio":     {5, 30},
+	"video":     {35, 55},
+	"mux":       {90, 10},
+}
+
+// phaseBase returns the start of a phase's slice of the bar, or 0 for an
+// unknown phase.
+func phaseBase(name string) int {
+	if r, ok := phaseRanges[name]; ok {
+		return r.base
+	}
+	return 0
+}
+
+// episodeProgress maps a raw (done, total) segment tick within the named phase
+// to an overall 0-100 episode percentage using the phase's [base, base+span]
+// slice. Indeterminate ticks (total<=0) hold at the phase base; a completed
+// phase (done>=total) reports base+span. It is the shared math behind both the
+// single-episode and batch progress adapters.
+func episodeProgress(phase string, done, total int) int {
+	r, ok := phaseRanges[phase]
+	if !ok {
+		// Unknown phase (none announced yet): report a flat 0 so the bar stays
+		// empty rather than flickering on the raw segment count.
+		return 0
+	}
+	if total <= 0 {
+		return r.base
+	}
+	if done <= 0 {
+		return r.base
+	}
+	if done >= total {
+		return r.base + r.span
+	}
+	return r.base + (r.span*done)/total
 }
 
 // Job is one enqueued download. Goroutines read it via the accessor methods; only
@@ -63,6 +114,7 @@ type Job struct {
 	err      string
 	segDone  int
 	segTotal int
+	phase    string
 }
 
 // Status reports the job's current state.
@@ -70,6 +122,14 @@ func (j *Job) Status() Status {
 	j.mu.RLock()
 	defer j.mu.RUnlock()
 	return j.status
+}
+
+// Phase reports the last announced download phase ("subtitles", "audio", "video",
+// "mux"), or "" before the first phase is announced.
+func (j *Job) Phase() string {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.phase
 }
 
 // Error reports the error message when Status is StatusError, else "".
@@ -104,6 +164,12 @@ func (j *Job) setSegment(done, total int) {
 	j.mu.Lock()
 	j.segDone = done
 	j.segTotal = total
+	j.mu.Unlock()
+}
+
+func (j *Job) setPhase(p string) {
+	j.mu.Lock()
+	j.phase = p
 	j.mu.Unlock()
 }
 
@@ -184,7 +250,11 @@ func (m *Manager) run(j *Job, task Task) {
 		j.emit(Event{Type: EventDone, Status: StatusError})
 		return
 	}
+	// Emit a terminal status event before the done event so late subscribers
+	// (and the existing status listener) catch the transition, not just the
+	// done listener. Defense-in-depth for the client-side badge update.
 	j.set(StatusDone, "")
+	j.emit(Event{Type: EventStatus, Status: StatusDone})
 	j.emit(Event{Type: EventDone, Status: StatusDone})
 }
 
@@ -233,7 +303,7 @@ func (m *Manager) runBatch(j *Job, tasks []Task) {
 	j.set(StatusDownloading, "")
 	j.emit(Event{Type: EventStatus, Status: StatusDownloading})
 
-	bp := &batchProgress{job: j}
+	bp := &batchProgress{job: j, episodeCount: len(tasks)}
 	var firstErr string
 	anyErr := false
 	for _, task := range tasks {
@@ -243,11 +313,11 @@ func (m *Manager) runBatch(j *Job, tasks []Task) {
 				firstErr = err.Error()
 			}
 		}
-		// Fold the just-finished sub-task's last segment tick into the cumulative
-		// base so the next sub-task's progress continues from there.
-		bp.baseDone += bp.curDone
-		bp.baseTotal += bp.curTotal
-		bp.curDone, bp.curTotal = 0, 0
+		// Advance to the next episode so the next sub-task's phase/segment ticks
+		// continue the bar monotonically across the batch (each episode owns a
+		// 0-100 slice of the overall episodeCount*100 bar).
+		bp.episodeIndex++
+		bp.phase = ""
 	}
 
 	if anyErr {
@@ -256,32 +326,45 @@ func (m *Manager) runBatch(j *Job, tasks []Task) {
 		j.emit(Event{Type: EventDone, Status: StatusError})
 		return
 	}
+	// Emit a terminal status event before the done event so late subscribers
+	// catch the transition (see run).
 	j.set(StatusDone, "")
+	j.emit(Event{Type: EventStatus, Status: StatusDone})
 	j.emit(Event{Type: EventDone, Status: StatusDone})
 }
 
 // batchProgress adapts a parent batch Job onto the download.Progress seam,
-// aggregating segment progress across sequential sub-tasks. Each sub-task's
-// Segment(done, total) is reported as (baseDone+done, baseTotal+total), where
-// base accumulates the finalized (done, total) of completed sub-tasks so the
-// aggregate grows monotonically across the batch. Printf passes through as a
-// message event (so each episode's progress lines still stream).
+// mapping each episode's phase-weighted progress onto a 0-100 slice of an
+// overall episodeCount*100 bar so the aggregate climbs monotonically 0-100
+// across the whole batch (season/series). episodeIndex is the number of
+// completed sub-tasks; the active episode owns slice
+// [episodeIndex*100, (episodeIndex+1)*100). Printf passes through as a message
+// event so each episode's progress lines still stream.
 type batchProgress struct {
-	job       *Job
-	baseDone  int
-	baseTotal int
-	curDone   int
-	curTotal  int
+	job          *Job
+	episodeCount int
+	episodeIndex int
+	phase        string
 }
 
 func (b *batchProgress) Printf(format string, args ...any) {
 	b.job.emit(Event{Type: EventMessage, Message: fmt.Sprintf(format, args...)})
 }
 
+func (b *batchProgress) Phase(name string) {
+	b.phase = name
+	b.job.setPhase(name)
+	b.job.emit(Event{Type: EventPhase, Phase: name})
+	aggDone := b.episodeIndex*100 + phaseBase(name)
+	aggTotal := b.episodeCount * 100
+	b.job.setSegment(aggDone, aggTotal)
+	b.job.emit(Event{Type: EventSegment, Done: aggDone, Total: aggTotal})
+}
+
 func (b *batchProgress) Segment(done, total int) {
-	b.curDone, b.curTotal = done, total
-	aggDone := b.baseDone + done
-	aggTotal := b.baseTotal + total
+	epPct := episodeProgress(b.phase, done, total)
+	aggDone := b.episodeIndex*100 + epPct
+	aggTotal := b.episodeCount * 100
 	b.job.setSegment(aggDone, aggTotal)
 	b.job.emit(Event{Type: EventSegment, Done: aggDone, Total: aggTotal})
 }
@@ -305,18 +388,32 @@ func (m *Manager) List() []*Job {
 	return out
 }
 
-// channelProgress adapts a Job onto the download.Progress seam: Printf becomes a
-// message Event, Segment becomes a segment Event (and is mirrored onto the Job
-// for late subscribers). It performs no I/O of its own.
+// channelProgress adapts a single-episode Job onto the download.Progress seam:
+// Printf becomes a message Event, Phase announces a download phase and jumps the
+// bar to that phase's base, and Segment is mapped through episodeProgress to a
+// phase-weighted 0-100 Event (mirrored onto the Job for late subscribers). The
+// bar climbs 0-90 across subtitles/audio/video, sits at 90 through mux, and the
+// done event fills it to 100. It performs no I/O of its own.
 type channelProgress struct {
-	job *Job
+	job   *Job
+	phase string
 }
 
 func (c *channelProgress) Printf(format string, args ...any) {
 	c.job.emit(Event{Type: EventMessage, Message: fmt.Sprintf(format, args...)})
 }
 
+func (c *channelProgress) Phase(name string) {
+	c.phase = name
+	c.job.setPhase(name)
+	c.job.emit(Event{Type: EventPhase, Phase: name})
+	base := phaseBase(name)
+	c.job.setSegment(base, 100)
+	c.job.emit(Event{Type: EventSegment, Done: base, Total: 100})
+}
+
 func (c *channelProgress) Segment(done, total int) {
-	c.job.setSegment(done, total)
-	c.job.emit(Event{Type: EventSegment, Done: done, Total: total})
+	pct := episodeProgress(c.phase, done, total)
+	c.job.setSegment(pct, 100)
+	c.job.emit(Event{Type: EventSegment, Done: pct, Total: 100})
 }

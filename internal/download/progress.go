@@ -16,6 +16,10 @@ type Progress interface {
 	// Segment replaces the "\rDownloaded N of M segments (P%%)" line emitted as
 	// each media segment finishes.
 	Segment(done, total int)
+	// Phase names the download phase that is starting ("subtitles", "audio",
+	// "video", "mux"). The server uses it to drive a phase-weighted progress
+	// bar; stdoutProgress ignores it so the CLI output stays byte-identical.
+	Phase(name string)
 }
 
 // stdoutProgress writes to stdout via fmt, mirroring the pre-refactor CLI output
@@ -30,3 +34,7 @@ func (stdoutProgress) Segment(done, total int) {
 	}
 	fmt.Printf("\rDownloaded %v of %v segments (%v%%)", done, total, (100*done)/total)
 }
+
+// Phase is a no-op for the CLI: phases are a server/UI concern, and emitting
+// anything here would change the byte-identical stdout the CLI preserves.
+func (stdoutProgress) Phase(name string) {}

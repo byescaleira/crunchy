@@ -278,47 +278,127 @@ templ JobsPage(js []*jobs.Job) {
 					done: "bg-success",
 					error: "bg-error"
 				};
+				var badgeClass = {
+					queued: "badge-ghost",
+					downloading: "badge-warning",
+					muxing: "badge-info",
+					done: "badge-success",
+					error: "badge-error"
+				};
+				var PHASES = ["subtitles", "audio", "video", "mux"];
+				var PHASE_LABELS = { subtitles: "Subtitles", audio: "Audio", video: "Video", mux: "Muxing" };
+				var CHIP_BASE = "inline-flex items-center px-1.5 py-0.5 rounded-field font-mono text-[10px] uppercase tracking-wider border transition-colors ";
+				var CHIP_DONE = "border-primary/40 text-primary bg-primary/10";
+				var CHIP_ACTIVE = "border-primary text-primary-content bg-primary crdl-dot";
+				var CHIP_PENDING = "border-base-300 text-base-content/40";
+
+				function chipClass(state) {
+					if (state === "done") { return CHIP_BASE + CHIP_DONE; }
+					if (state === "active") { return CHIP_BASE + CHIP_ACTIVE; }
+					return CHIP_BASE + CHIP_PENDING;
+				}
+
+				// renderRail lights the phase rail up to `phase`: completed chips
+				// done, the active chip pulsing, the rest pending.
+				function renderRail(id, phase) {
+					var idx = PHASES.indexOf(phase);
+					for (var i = 0; i < PHASES.length; i++) {
+						var chip = document.getElementById("job-" + id + "-chip-" + PHASES[i]);
+						if (!chip) { continue; }
+						var state = "pending";
+						if (idx >= 0) {
+							if (i < idx) { state = "done"; }
+							else if (i === idx) { state = "active"; }
+						}
+						chip.className = chipClass(state);
+					}
+				}
+
+				// renderRailDone marks every chip completed (terminal success).
+				function renderRailDone(id) {
+					for (var i = 0; i < PHASES.length; i++) {
+						var chip = document.getElementById("job-" + id + "-chip-" + PHASES[i]);
+						if (chip) { chip.className = chipClass("done"); }
+					}
+				}
+
+				function setPct(id, pct) {
+					var box = document.getElementById("job-" + id + "-progress");
+					var bar = box && box.querySelector("progress");
+					if (bar) { bar.value = pct; }
+					var span = document.getElementById("job-" + id + "-pct");
+					if (span) { span.textContent = pct + "%"; }
+				}
+
+				// applyStatus updates the badge + dot (+ error line) for a status
+				// transition. Shared by the status and done listeners so the
+				// terminal "done" / "error" state always reaches the badge.
+				function applyStatus(id, status, message) {
+					var badge = document.getElementById("job-" + id + "-status");
+					if (badge) {
+						badge.textContent = status;
+						badge.className = "badge " + (badgeClass[status] || "badge-ghost") + " badge-sm font-mono shrink-0";
+					}
+					var dot = document.getElementById("job-" + id + "-dot");
+					if (dot) {
+						dot.className = "inline-block h-2 w-2 rounded-full shrink-0 " + (dotColor[status] || "bg-base-content/30") + ((status === "downloading" || status === "muxing") ? " crdl-dot" : "");
+					}
+					if (status === "error") {
+						var err = document.getElementById("job-" + id + "-error");
+						if (err && message) {
+							err.innerHTML = '<div class="text-xs text-error font-mono break-all"></div>';
+							err.firstChild.textContent = message;
+						}
+					}
+				}
+
 				document.querySelectorAll("[data-job-sse]").forEach(function (card) {
 					var id = card.getAttribute("data-job-sse");
+					var finished = false;
+					var phase = "";
 					var es = new EventSource("/jobs/" + id + "/events");
+
+					es.addEventListener("phase", function (e) {
+						var d = JSON.parse(e.data);
+						phase = d.phase || "";
+						var label = document.getElementById("job-" + id + "-phase");
+						if (label) { label.textContent = PHASE_LABELS[phase] || phase; }
+						renderRail(id, phase);
+					});
+
 					es.addEventListener("segment", function (e) {
 						var d = JSON.parse(e.data);
-						var box = document.getElementById("job-" + id + "-progress");
-						var bar = box && box.querySelector("progress");
-						if (bar && d.total > 0) {
-							bar.value = (d.done * 100) / d.total;
-						}
+						var pct = d.total > 0 ? Math.round((d.done * 100) / d.total) : 0;
+						setPct(id, pct);
+						if (phase) { renderRail(id, phase); }
 					});
+
 					es.addEventListener("status", function (e) {
 						var d = JSON.parse(e.data);
-						var badge = document.getElementById("job-" + id + "-status");
-						if (badge) {
-							badge.textContent = d.status;
-							badge.className = "badge " + ({
-								queued: "badge-ghost",
-								downloading: "badge-warning",
-								muxing: "badge-info",
-								done: "badge-success",
-								error: "badge-error"
-							}[d.status] || "badge-ghost") + " badge-sm font-mono shrink-0";
-						}
-						var dot = document.getElementById("job-" + id + "-dot");
-						if (dot) {
-							dot.className = "inline-block h-2 w-2 rounded-full shrink-0 " + (dotColor[d.status] || "bg-base-content/30") + ((d.status === "downloading" || d.status === "muxing") ? " crdl-dot" : "");
-						}
-						if (d.status === "error") {
-							var err = document.getElementById("job-" + id + "-error");
-							if (err && d.message) {
-								err.innerHTML = '<div class="text-xs text-error font-mono break-all"></div>';
-								err.firstChild.textContent = d.message;
-							}
-						}
+						applyStatus(id, d.status, d.message);
 					});
-					es.addEventListener("done", function () {
+
+					es.addEventListener("done", function (e) {
+						var d = JSON.parse(e.data);
+						finished = true;
+						applyStatus(id, d.status, d.message);
+						setPct(id, 100);
+						// A finished job lights the whole rail; a failed one leaves
+						// the rail showing how far it got (the active phase stays
+						// lit, the rest pending).
+						if (d.status !== "error") {
+							renderRailDone(id);
+						}
+						var label = document.getElementById("job-" + id + "-phase");
+						if (label) { label.textContent = d.status === "error" ? "Failed" : "Done"; }
 						es.close();
 					});
+
+					// A transport blip mid-download should not strand the card: if
+					// the job hasn't finished, let EventSource auto-reconnect. Once
+					// finished, swallow the connection-close error.
 					es.addEventListener("error", function () {
-						es.close();
+						if (finished) { es.close(); }
 					});
 				});
 			})();

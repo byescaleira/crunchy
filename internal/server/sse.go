@@ -67,6 +67,8 @@ func (s *Server) handleJobEvents(w http.ResponseWriter, r *http.Request) {
 				send("message", map[string]any{"message": e.Message})
 			case jobs.EventSegment:
 				send("segment", map[string]any{"done": e.Done, "total": e.Total})
+			case jobs.EventPhase:
+				send("phase", map[string]any{"phase": e.Phase})
 			case jobs.EventError:
 				send("status", map[string]any{"status": string(jobs.StatusError), "message": e.Message})
 			case jobs.EventDone:

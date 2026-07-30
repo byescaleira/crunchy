@@ -209,16 +209,18 @@ func (s *Server) handleAPIDownload(w http.ResponseWriter, r *http.Request) {
 // fields (Events/Done) are deliberately omitted — they cannot be marshaled
 // and would leak internals.
 type jobJSON struct {
-	ID       string         `json:"id"`
-	Label    string         `json:"label"`
-	Status   string         `json:"status"`
-	Progress jobProgress    `json:"progress"`
-	Error    string         `json:"error"`
+	ID       string      `json:"id"`
+	Label    string      `json:"label"`
+	Status   string      `json:"status"`
+	Phase    string      `json:"phase"`
+	Progress jobProgress `json:"progress"`
+	Error    string      `json:"error"`
 }
 
 type jobProgress struct {
-	Done  int `json:"done"`
-	Total int `json:"total"`
+	Done    int `json:"done"`
+	Total   int `json:"total"`
+	Percent int `json:"percent"`
 }
 
 // handleAPIJob returns the current state of one job.
@@ -230,13 +232,19 @@ func (s *Server) handleAPIJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	done, total := job.Segment()
+	pct := 0
+	if total > 0 {
+		pct = done * 100 / total
+	}
 	writeJSON(w, http.StatusOK, jobJSON{
 		ID:     job.ID,
 		Label:  job.Label,
 		Status: string(job.Status()),
+		Phase:  job.Phase(),
 		Progress: jobProgress{
-			Done:  done,
-			Total: total,
+			Done:    done,
+			Total:   total,
+			Percent: pct,
 		},
 		Error: job.Error(),
 	})

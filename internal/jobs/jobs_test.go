@@ -18,6 +18,7 @@ func TestManager_EnqueueComplete(t *testing.T) {
 
 	j := m.Enqueue("S01E01", func(p download.Progress) error {
 		p.Printf("Downloading %s audio...\n", "ja-JP")
+		p.Phase("audio")
 		p.Segment(1, 3)
 		p.Segment(2, 3)
 		p.Segment(3, 3)
@@ -34,9 +35,14 @@ func TestManager_EnqueueComplete(t *testing.T) {
 		t.Errorf("Error = %q, want empty", j.Error())
 	}
 
+	// Phase-weighted: Phase("audio") jumps to base 5; the three Segment ticks
+	// map to 5+30/3=15, 5+60/3=25, 5+30=35 — last lands at (35,100).
 	done, total := j.Segment()
-	if done != 3 || total != 3 {
-		t.Errorf("Segment = (%d,%d), want (3,3)", done, total)
+	if done != 35 || total != 100 {
+		t.Errorf("Segment = (%d,%d), want (35,100)", done, total)
+	}
+	if got := j.Phase(); got != "audio" {
+		t.Errorf("Phase = %q, want %q", got, "audio")
 	}
 
 	var messages []string
@@ -160,16 +166,20 @@ func TestEnqueueBatch_OrderedAggregateContinue(t *testing.T) {
 	}
 
 	tasks := []Task{
-		// sub-task 1: succeeds, reports 2 of 5 segments.
+		// sub-task 1: succeeds. Phase("audio") → episode 0 base 5; Segment(1,2)
+		// → 5 + 30/2 = 20.
 		func(p download.Progress) error {
 			record(1)
-			p.Segment(2, 5)
+			p.Phase("audio")
+			p.Segment(1, 2)
 			return nil
 		},
-		// sub-task 2: fails, reports 3 of 3 segments.
+		// sub-task 2: fails. Phase("audio") → episode 1 base 100+5=105;
+		// Segment(2,2) → 100 + 35 = 135.
 		func(p download.Progress) error {
 			record(2)
-			p.Segment(3, 3)
+			p.Phase("audio")
+			p.Segment(2, 2)
 			return errBoom
 		},
 		// sub-task 3: succeeds, reports no segments — still runs despite sub-task 2's error.
@@ -204,35 +214,58 @@ func TestEnqueueBatch_OrderedAggregateContinue(t *testing.T) {
 		t.Errorf("Error = %q, want %q", j.Error(), errBoom.Error())
 	}
 
-	// Segment aggregation: 2 of 5 from sub-task 1, then sub-task 2's 3 of 3 is
-	// added on top of the 2/5 base → 5 of 8. The last reported segment is (5, 8).
+	// Phase-weighted aggregate across 3 episodes (bar total = 300). The last
+	// reported segment is (135, 300).
 	done, total := j.Segment()
-	if done != 5 || total != 8 {
-		t.Errorf("aggregate Segment = (%d,%d), want (5,8)", done, total)
+	if done != 135 || total != 300 {
+		t.Errorf("aggregate Segment = (%d,%d), want (135,300)", done, total)
 	}
 
-	// The aggregate segment events are present in the stream.
+	// The segment events climb monotonically across the batch (no per-episode
+	// drop): 5 → 20 → 105 → 135, all over a 300 total.
 	var segs []Event
 	for e := range j.Events() {
 		if e.Type == EventSegment {
 			segs = append(segs, e)
 		}
 	}
-	if len(segs) < 2 {
-		t.Fatalf("expected at least 2 segment events, got %d", len(segs))
+	wantSegs := []int{5, 20, 105, 135}
+	if len(segs) != len(wantSegs) {
+		t.Fatalf("expected %d segment events, got %d: %+v", len(wantSegs), len(segs), segs)
 	}
-	// First segment is sub-task 1's (2,5); the (5,8) aggregate must appear.
-	if segs[0].Done != 2 || segs[0].Total != 5 {
-		t.Errorf("first segment = (%d,%d), want (2,5)", segs[0].Done, segs[0].Total)
-	}
-	var hasAggregate bool
-	for _, e := range segs {
-		if e.Done == 5 && e.Total == 8 {
-			hasAggregate = true
+	for i, want := range wantSegs {
+		if segs[i].Done != want || segs[i].Total != 300 {
+			t.Errorf("segment[%d] = (%d,%d), want (%d,300)", i, segs[i].Done, segs[i].Total, want)
 		}
 	}
-	if !hasAggregate {
-		t.Errorf("aggregate segment (5,8) missing from %v", segs)
+}
+
+// TestEpisodeProgress covers the phase-weighting math that both progress
+// adapters share: each phase owns a [base, base+span] slice of the 0-100 bar,
+// indeterminate ticks hold at the base, a completed phase reports base+span,
+// and an unknown phase reports 0.
+func TestEpisodeProgress(t *testing.T) {
+	cases := []struct {
+		phase string
+		done  int
+		total int
+		want  int
+	}{
+		{"subtitles", 0, 0, 0},   // indeterminate → base 0
+		{"subtitles", 1, 2, 2},   // 0 + 5/2 = 2
+		{"audio", 0, 3, 5},       // base 5
+		{"audio", 1, 2, 20},      // 5 + 30/2 = 20
+		{"audio", 2, 2, 35},      // completed → 5 + 30 = 35
+		{"video", 0, 0, 35},      // indeterminate → base 35
+		{"video", 1, 2, 62},      // 35 + 55/2 = 62
+		{"video", 2, 2, 90},       // completed → 35 + 55 = 90
+		{"mux", 0, 0, 90},        // base 90
+		{"", 5, 5, 0},            // unknown phase → 0
+	}
+	for _, c := range cases {
+		if got := episodeProgress(c.phase, c.done, c.total); got != c.want {
+			t.Errorf("episodeProgress(%q,%d,%d) = %d, want %d", c.phase, c.done, c.total, got, c.want)
+		}
 	}
 }
 
