@@ -216,52 +216,60 @@ templ jobProgress(j *jobs.Job) {
 	<div class="font-mono text-xs text-primary/70 mt-1.5" id={ "job-" + j.ID + "-phase" }>{ label }</div>
 }
 
-// jobControls renders the per-card action buttons. Running jobs show Cancel;
-// terminal jobs (done/error/cancelled) show Restart + Delete. The two groups are
-// tagged data-controls="running"/"terminal" so the SSE script toggles them live
-// as the status changes (the server renders the right one initially based on
-// the current status). All three are plain HTML POST routes (not /api/*), so
-// CORS is unchanged. Restart + Delete use htmx Out-of-Band swaps to refresh the
-// queue; Cancel relies on the SSE status event to flip the card to "cancelled".
+// jobControls renders the per-card action buttons. BOTH control groups are
+// always in the DOM — the running group (Cancel) and the terminal group
+// (Restart + Delete) — with the right one shown initially via an inline
+// display style, and the SSE status event toggles them live as the job's state
+// changes. This matters because a job is usually "downloading" when the list is
+// first fetched (so only Cancel would render); when it then errors over SSE,
+// the terminal group must already exist in the DOM for the toggle to reveal it
+// — otherwise Restart/Delete never appear and a failed job can't be retried.
+//
+// The buttons POST and use hx-swap="none" so htmx does not replace any element
+// with the (empty) response — the card updates come from the SSE stream (status
+// flip + removed) and from the jobsChanged event the handlers fire, which
+// refreshes whichever jobs container is present (#download-queue on Browse,
+// #jobs-list on Jobs). All three are plain HTML POST routes (not /api/*), so
+// CORS is unchanged.
 templ jobControls(j *jobs.Job) {
 	{{
 		isTerminal := j.Status() == jobs.StatusDone || j.Status() == jobs.StatusError || j.Status() == jobs.StatusCancelled
+		runningStyle, terminalStyle := "display:none", ""
+		if !isTerminal {
+			runningStyle, terminalStyle = "", "display:none"
+		}
 	}}
-	if isTerminal {
-		<div class="flex items-center gap-1.5" data-controls="terminal">
-			<button
-				class="btn btn-ghost btn-xs rounded-full gap-1 text-white/70 hover:text-white"
-				hx-post={ "/jobs/" + j.ID + "/restart" }
-				hx-target="#download-queue"
-				hx-swap="innerHTML"
-				title="Restart this episode"
-			>
-				@iconRestart("h-3.5 w-3.5")
-				<span>Restart</span>
-			</button>
-			<button
-				class="btn btn-ghost btn-xs rounded-full gap-1 text-white/70 hover:text-error"
-				hx-post={ "/jobs/" + j.ID + "/delete" }
-				hx-target="#download-queue"
-				hx-swap="innerHTML"
-				title="Remove this card"
-			>
-				@iconTrash("h-3.5 w-3.5")
-				<span>Delete</span>
-			</button>
-		</div>
-	} else {
-		<div class="flex items-center gap-1.5" data-controls="running">
-			<button
-				class="btn btn-ghost btn-xs rounded-full gap-1 text-white/70 hover:text-error"
-				hx-post={ "/jobs/" + j.ID + "/cancel" }
-				title="Cancel this download"
-			>
-				@iconCancel("h-3.5 w-3.5")
-				<span>Cancel</span>
-			</button>
-		</div>
-	}
+	<div class="flex items-center gap-1.5" data-controls="running" style={ runningStyle }>
+		<button
+			class="btn btn-ghost btn-xs rounded-full gap-1 text-white/70 hover:text-error"
+			hx-post={ "/jobs/" + j.ID + "/cancel" }
+			hx-swap="none"
+			title="Cancel this download"
+		>
+			@iconCancel("h-3.5 w-3.5")
+			<span>Cancel</span>
+		</button>
+	</div>
+	<div class="flex items-center gap-1.5" data-controls="terminal" style={ terminalStyle }>
+		<button
+			class="btn btn-ghost btn-xs rounded-full gap-1 text-white/70 hover:text-white"
+			hx-post={ "/jobs/" + j.ID + "/restart" }
+			hx-swap="none"
+			title="Restart this episode"
+		>
+			@iconRestart("h-3.5 w-3.5")
+			<span>Restart</span>
+		</button>
+		<button
+			class="btn btn-ghost btn-xs rounded-full gap-1 text-white/70 hover:text-error"
+			hx-post={ "/jobs/" + j.ID + "/delete" }
+			hx-swap="none"
+			title="Remove this card"
+		>
+			@iconTrash("h-3.5 w-3.5")
+			<span>Delete</span>
+		</button>
+	</div>
 }
 
 // jobCard renders one job as a card: the episode thumbnail, a series · S##E##

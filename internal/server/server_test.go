@@ -507,6 +507,43 @@ func TestJobsList_ControlButtons(t *testing.T) {
 	<-running.Done()
 }
 
+// TestJobsList_BothControlGroupsRendered guards the retry bug: a card fetched
+// while a job is still running renders the Cancel group, and when that job then
+// errors over SSE the page must already hold the Restart/Delete group in the
+// DOM for the toggle to reveal it. So BOTH groups must always be rendered
+// (one hidden via inline display), regardless of the job's current status —
+// including a job that errored. An errored card must contain a Restart button.
+func TestJobsList_BothControlGroupsRendered(t *testing.T) {
+	s := newTestServer(t)
+	failed := s.manager.Enqueue(jobs.JobSpec{
+		Label: "boom", Title: "Boom", RestartKind: "episode", RestartID: "epBoom",
+		Task: func(context.Context, download.Progress) error { return fmt.Errorf("PSSH not found") },
+	})
+	<-failed.Done()
+
+	h := s.Handler()
+	r, w := get("/jobs/list")
+	got := body(t, h, r, w)
+	// The errored card must offer a Retry (Restart) — the original bug left no
+	// terminal group in the DOM for a job that errored after rendering as running.
+	if !strings.Contains(got, "/jobs/"+failed.ID+"/restart") {
+		t.Errorf("errored job card missing Restart button; got: %s", got)
+	}
+	// Both control groups are present in the DOM (the hidden one via display:none)
+	// so the SSE toggle can reveal Restart/Delete when a running job errors live.
+	if c := strings.Count(got, `data-controls="running"`); c < 1 {
+		t.Errorf("expected a running control group in the DOM, got %d; %s", c, got)
+	}
+	if c := strings.Count(got, `data-controls="terminal"`); c < 1 {
+		t.Errorf("expected a terminal control group in the DOM, got %d; %s", c, got)
+	}
+	// The hidden terminal group on a running card (and vice-versa) is hidden via
+	// inline display:none, not omitted from the DOM. (templ emits "display:none;".)
+	if !strings.Contains(got, `style="display:none`) {
+		t.Errorf("expected an inline display:none to hide the inactive group; got: %s", got)
+	}
+}
+
 // TestJobRoutes_Wiring exercises the cancel/delete/restart HTML routes end to
 // end through the handler: cancel aborts a running job, delete removes a
 // terminal one (and clears stored restart opts), restart re-enqueues from the

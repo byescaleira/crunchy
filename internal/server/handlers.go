@@ -398,38 +398,38 @@ func (s *Server) handleJobsList(w http.ResponseWriter, r *http.Request) {
 
 // handleJobCancel aborts a running (or queued) job by cancelling its context.
 // The task observes the cancellation at its next I/O boundary and the job
-// reaches StatusCancelled, which the SSE stream forwards to the card. The
-// response is empty with a downloadsUpdated HX-Trigger so htmx refreshes
-// #download-queue (and the card's control buttons via the SSE status event).
+// reaches StatusCancelled, which the SSE stream forwards to the card (the SSE
+// status event flips the control groups live). The response is empty with a
+// jobsChanged HX-Trigger so the page refreshes whichever jobs container is
+// present (#download-queue on Browse, #jobs-list on Jobs).
 func (s *Server) handleJobCancel(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	s.manager.Cancel(id)
-	w.Header().Set("HX-Trigger", `{"downloadsUpdated":null}`)
+	w.Header().Set("HX-Trigger", `{"jobsChanged":null}`)
 	w.WriteHeader(http.StatusOK)
 }
 
 // handleJobDelete removes a terminal job from the Manager. The Manager
 // broadcasts EventRemoved, which the SSE stream forwards as a `removed` event
-// so the page script drops the card live — no list refresh needed. The stored
-// restart opts for the id are cleared too so the map does not leak. A
-// still-running job is not deleted (returns OK without removing; the caller
-// must cancel first).
+// so the page script drops the card live. The stored restart opts for the id are
+// cleared too so the map does not leak. A still-running job is not deleted
+// (returns OK without removing; the caller must cancel first). jobsChanged
+// refreshes whichever jobs container is present so the list stays consistent.
 func (s *Server) handleJobDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if s.manager.Delete(id) {
 		s.clearRestart(id)
 	}
-	// Even if nothing was deleted (race / already gone), refresh the queue so the
-	// page is consistent.
-	w.Header().Set("HX-Trigger", `{"downloadsUpdated":null}`)
+	w.Header().Set("HX-Trigger", `{"jobsChanged":null}`)
 	w.WriteHeader(http.StatusOK)
 }
 
 // handleJobRestart re-enqueues a job's target using the download opts stored when
 // it was first created. The Job carries RestartKind/RestartID (per-episode);
 // restartOptsFor supplies the quality/language/output choices. A new job is
-// enqueued (a fresh card appears via the SSE snapshot); the old card is left in
-// place — deleting a terminal source card is a separate, explicit action.
+// enqueued (its card appears once jobsChanged refreshes the container); the old
+// card is left in place — deleting a terminal source card is a separate,
+// explicit action.
 func (s *Server) handleJobRestart(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	job, ok := s.manager.Get(id)
@@ -442,7 +442,7 @@ func (s *Server) handleJobRestart(w http.ResponseWriter, r *http.Request) {
 	if kind == "" || target == "" {
 		// No restart target recorded (e.g. an old job from before this feature):
 		// nothing to re-enqueue.
-		w.Header().Set("HX-Trigger", `{"downloadsUpdated":null}`)
+		w.Header().Set("HX-Trigger", `{"jobsChanged":null}`)
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -455,10 +455,10 @@ func (s *Server) handleJobRestart(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.enqueue(kind, target, opts); err != nil {
 		// Surface a non-sensitive error (enqueue only returns transport/config
 		// errors, never the token). A 424 keeps the page usable.
-		w.Header().Set("HX-Trigger", `{"downloadsUpdated":null}`)
+		w.Header().Set("HX-Trigger", `{"jobsChanged":null}`)
 		w.WriteHeader(http.StatusFailedDependency)
 		return
 	}
-	w.Header().Set("HX-Trigger", `{"downloadsUpdated":null}`)
+	w.Header().Set("HX-Trigger", `{"jobsChanged":null}`)
 	w.WriteHeader(http.StatusOK)
 }
