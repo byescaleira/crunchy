@@ -33,7 +33,10 @@ type MediaTrack struct {
 //
 // format is "mkv" or "mp4"; coverFile is a path to a .jpg, or "" to skip the
 // cover. info carries the episode + (best-effort) series metadata for tags.
-func BuildMergeArgs(videoFile string, audioTracks, subTracks []MediaTrack, outputFile, coverFile, format string, info media.EpisodeInfo) []string {
+// videoW/videoH are the real video dimensions (probed by Merge via ffprobe);
+// for MP4 they set the mov_text subtitle track canvas so QuickTime Player lists
+// the subtitle (a 0x0 subtitle track is invisible to QuickTime). Ignored for MKV.
+func BuildMergeArgs(videoFile string, audioTracks, subTracks []MediaTrack, outputFile, coverFile, format string, info media.EpisodeInfo, videoW, videoH int) []string {
 	isMP4 := format == "mp4"
 	attachCover := coverFile != "" && !isMP4 // MKV: -attach (an attachment stream)
 	mapCover := coverFile != "" && isMP4     // MP4: a mapped mjpeg video stream
@@ -43,6 +46,17 @@ func BuildMergeArgs(videoFile string, audioTracks, subTracks []MediaTrack, outpu
 		args = append(args, "-i", audio.File)
 	}
 	for _, sub := range subTracks {
+		// mov_text (MP4) ignores ASS PlayResX/PlayResY and writes a 0x0 subtitle
+		// track unless the canvas is set explicitly; a 0x0 subtitle track is
+		// present (Subler shows the tx3g) but QuickTime Player won't list/select
+		// it. -canvas_size is an input option (applies to the next -i) that makes
+		// ffmpeg write the video dimensions into the subtitle tkhd, matching what
+		// Apple-muxed files (e.g. iTunes .m4v) carry. MKV copies the ASS verbatim
+		// (libass does its own scaling), so it doesn't need this. It does NOT
+		// rescale the cue font — rescaleASSFont (called by Merge) handles that.
+		if isMP4 && videoW > 0 && videoH > 0 {
+			args = append(args, "-canvas_size", fmt.Sprintf("%dx%d", videoW, videoH))
+		}
 		args = append(args, "-i", sub.File)
 	}
 	if mapCover {
@@ -213,17 +227,19 @@ func Merge(ctx context.Context, videoFile string, audioTracks, subTracks []Media
 	// no dimensions, so players render it at ~20px on the video frame —
 	// effectively invisible. MKV keeps the ASS verbatim (libass does the
 	// scaling), so only MP4 needs this rescale to the real video height.
+	videoW, videoH := 0, 0
 	if format == "mp4" && len(subTracks) > 0 {
-		if h := probeVideoHeight(videoFile); h > 0 {
+		videoW, videoH = probeVideoSize(videoFile)
+		if videoH > 0 {
 			for _, sub := range subTracks {
-				if err := rescaleASSFont(sub.File, h); err != nil {
+				if err := rescaleASSFont(sub.File, videoH); err != nil {
 					return fmt.Errorf("rescale subtitle %s: %w", sub.Locale, err)
 				}
 			}
 		}
 	}
 
-	args := BuildMergeArgs(videoFile, audioTracks, subTracks, outputFile, coverFile, format, info)
+	args := BuildMergeArgs(videoFile, audioTracks, subTracks, outputFile, coverFile, format, info, videoW, videoH)
 
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	var stderr bytes.Buffer
@@ -249,23 +265,29 @@ func Merge(ctx context.Context, videoFile string, audioTracks, subTracks []Media
 	return nil
 }
 
-// probeVideoHeight returns the height (in pixels) of the first video stream in
-// file, via ffprobe. Returns 0 if ffprobe is unavailable or the height can't be
-// read; callers treat 0 as "don't rescale" (subs stay at their authored size,
-// which is no worse than before this fix).
-func probeVideoHeight(file string) int {
+// probeVideoSize returns the width and height (in pixels) of the first video
+// stream in file, via ffprobe. Returns 0,0 if ffprobe is unavailable or the
+// dimensions can't be read; callers treat 0 as "unknown" (subs keep their
+// authored font size and the mov_text track stays 0x0 — no worse than before
+// this fix).
+func probeVideoSize(file string) (int, int) {
 	out, err := exec.Command("ffprobe",
 		"-v", "error",
 		"-select_streams", "v:0",
-		"-show_entries", "stream=height",
+		"-show_entries", "stream=width,height",
 		"-of", "csv=p=0",
 		file,
 	).Output()
 	if err != nil {
-		return 0
+		return 0, 0
 	}
-	h, _ := strconv.Atoi(strings.TrimSpace(string(out)))
-	return h
+	parts := strings.Split(strings.TrimSpace(string(out)), ",")
+	if len(parts) < 2 {
+		return 0, 0
+	}
+	w, _ := strconv.Atoi(strings.TrimSpace(parts[0]))
+	h, _ := strconv.Atoi(strings.TrimSpace(parts[1]))
+	return w, h
 }
 
 // rescaleASSFont rewrites an .ass in place so every Style Fontsize is scaled to a

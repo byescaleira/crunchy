@@ -27,7 +27,7 @@ func TestBuildMergeArgs_MKV(t *testing.T) {
 		subs := []MediaTrack{{File: "s.ass", Locale: "en-US"}}
 		info := epInfo("Series", "Ep", 1, 2)
 
-		got := BuildMergeArgs("v.mp4", audio, subs, "out.mkv", "", "mkv", info)
+		got := BuildMergeArgs("v.mp4", audio, subs, "out.mkv", "", "mkv", info, 0, 0)
 		want := []string{
 			"-i", "v.mp4",
 			"-i", "a.m4a",
@@ -58,7 +58,7 @@ func TestBuildMergeArgs_MKV(t *testing.T) {
 		}
 		info := epInfo("Series", "Ep", 3, 4)
 
-		got := BuildMergeArgs("v.mp4", audio, nil, "out.mkv", "", "mkv", info)
+		got := BuildMergeArgs("v.mp4", audio, nil, "out.mkv", "", "mkv", info, 0, 0)
 		want := []string{
 			"-i", "v.mp4",
 			"-i", "a1.m4a",
@@ -88,10 +88,13 @@ func TestBuildMergeArgs_MP4(t *testing.T) {
 	subs := []MediaTrack{{File: "s.ass", Locale: "en-US"}}
 	info := epInfo("Series", "Ep", 1, 2)
 
-	got := BuildMergeArgs("v.mp4", audio, subs, "out.mp4", "", "mp4", info)
+	got := BuildMergeArgs("v.mp4", audio, subs, "out.mp4", "", "mp4", info, 1920, 1080)
 	want := []string{
 		"-i", "v.mp4",
 		"-i", "a.m4a",
+		// MP4 sets the mov_text subtitle canvas to the video size so QuickTime
+		// Player lists/selects the subtitle track (a 0x0 track is invisible to it).
+		"-canvas_size", "1920x1080",
 		"-i", "s.ass",
 		"-map", "0:v:0",
 		"-map", "1:a:0",
@@ -130,7 +133,7 @@ func TestBuildMergeArgs_MKV_Cover(t *testing.T) {
 	subs := []MediaTrack{{File: "s.ass", Locale: "en-US"}}
 	info := epInfo("Series", "Ep", 1, 2)
 
-	got := BuildMergeArgs("v.mp4", audio, subs, "out.mkv", "cover.jpg", "mkv", info)
+	got := BuildMergeArgs("v.mp4", audio, subs, "out.mkv", "cover.jpg", "mkv", info, 0, 0)
 	// The cover is an attachment, never a mapped stream.
 	if !containsPair(got, "-attach", "cover.jpg") {
 		t.Error("MKV cover must use -attach cover.jpg")
@@ -170,7 +173,7 @@ func TestBuildMergeArgs_MP4_Cover(t *testing.T) {
 	subs := []MediaTrack{{File: "s.ass", Locale: "en-US"}}
 	info := epInfo("Series", "Ep", 1, 2)
 
-	got := BuildMergeArgs("v.mp4", audio, subs, "out.mp4", "cover.jpg", "mp4", info)
+	got := BuildMergeArgs("v.mp4", audio, subs, "out.mp4", "cover.jpg", "mp4", info, 1920, 1080)
 	// MP4 cover is a mapped mjpeg video stream (input index 1 + #audio + #subs = 3).
 	if !containsPair(got, "-i", "cover.jpg") {
 		t.Error("MP4 cover must add -i cover.jpg")
@@ -188,6 +191,10 @@ func TestBuildMergeArgs_MP4_Cover(t *testing.T) {
 	// Subs are mov_text, not copy.
 	if !containsPair(got, "-c:s", "mov_text") {
 		t.Error("MP4 subs must be mov_text")
+	}
+	// MP4 must set the subtitle canvas to the video size (QuickTime selectability).
+	if !containsPair(got, "-canvas_size", "1920x1080") {
+		t.Error("MP4 must emit -canvas_size WxH before each subtitle input")
 	}
 }
 
