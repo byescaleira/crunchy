@@ -22,9 +22,11 @@ func trackTitle(locale string) string {
 	return locale
 }
 
-// mergeEverything merges the video, all audio tracks and all subtitle tracks
-// into a single MKV container.
-func mergeEverything(videoFile string, audioTracks, subTracks []mediaTrack, outputFile string, info EpisodeInfo) {
+// buildMergeArgs constructs the ffmpeg argument list that merges the video, all
+// audio tracks and all subtitle tracks into a single MKV. Extracted from
+// mergeEverything so the load-bearing arg order/indices/dispositions can be
+// unit-tested without invoking ffmpeg.
+func buildMergeArgs(videoFile string, audioTracks, subTracks []mediaTrack, outputFile string, info EpisodeInfo) []string {
 	args := []string{"-i", videoFile}
 	for _, audio := range audioTracks {
 		args = append(args, "-i", audio.file)
@@ -87,6 +89,13 @@ func mergeEverything(videoFile string, audioTracks, subTracks []mediaTrack, outp
 		"-metadata:g", "season_number="+fmt.Sprintf("%v", info.EpisodeMetadata.EpisodeNumber),
 		outputFile,
 	)
+	return args
+}
+
+// mergeEverything merges the video, all audio tracks and all subtitle tracks
+// into a single MKV container.
+func mergeEverything(videoFile string, audioTracks, subTracks []mediaTrack, outputFile string, info EpisodeInfo) {
+	args := buildMergeArgs(videoFile, audioTracks, subTracks, outputFile, info)
 
 	cmd := exec.Command("ffmpeg", args...)
 	var stderr bytes.Buffer

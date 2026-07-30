@@ -17,16 +17,30 @@ import (
 
 var keys []*widevine.Key
 
-// getPssh finds the PSSH in the MPD manifest
+// contentKey returns the Widevine CONTENT key from a license key set, matching
+// the selection that widevine.DecryptMP4Auto performs internally. We decrypt
+// segment-by-segment ourselves (instead of calling DecryptMP4Auto on the whole
+// file) so the key has to be resolved here.
+func contentKey(ks []*widevine.Key) ([]byte, error) {
+	for _, k := range ks {
+		if k.Type == widevinepb.License_KeyContainer_CONTENT {
+			return k.Key, nil
+		}
+	}
+	return nil, errors.New("no CONTENT key type found in the provided key set")
+}
+
+// getPssh finds the PSSH in the MPD manifest by scanning every adaptation set
+// in the first period, instead of assuming it lives at AdaptationSets[0].
 func getPssh(mpd *mpd.MPD) *string {
-	set := mpd.Period[0].AdaptationSets[0]
-	if set == nil {
+	if len(mpd.Period) == 0 {
 		return nil
 	}
-
-	for _, contentProtection := range set.ContentProtections {
-		if contentProtection.CencPSSH != nil {
-			return contentProtection.CencPSSH
+	for _, set := range mpd.Period[0].AdaptationSets {
+		for _, contentProtection := range set.ContentProtections {
+			if contentProtection.CencPSSH != nil {
+				return contentProtection.CencPSSH
+			}
 		}
 	}
 

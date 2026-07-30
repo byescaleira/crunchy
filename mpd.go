@@ -71,6 +71,26 @@ func getBaseUrl(set *mpd.AdaptationSet, isVideoSet bool, quality string) (*strin
 	return &firstRep.BaseURL[0].Value, firstRep.ID
 }
 
+// findAdaptationSet returns the first adaptation set of the given type
+// ("video" or "audio") in the first period, matched by mimeType/contentType.
+// This replaces hard-coded indices (AdaptationSets[0]/[1]) which break on
+// manifests whose adaptation sets are ordered differently or come in a
+// different count (e.g. movies/specials).
+func findAdaptationSet(mpd *mpd.MPD, want string) (*mpd.AdaptationSet, error) {
+	if len(mpd.Period) == 0 {
+		return nil, fmt.Errorf("manifest has no Period")
+	}
+	for _, set := range mpd.Period[0].AdaptationSets {
+		if strings.HasPrefix(set.MimeType, want) {
+			return set, nil
+		}
+		if set.ContentType != nil && strings.HasPrefix(*set.ContentType, want) {
+			return set, nil
+		}
+	}
+	return nil, fmt.Errorf("no %s adaptation set found in manifest", want)
+}
+
 func expandTimeline(timeline []*mpd.SegmentTimelineS, startNumber int64) []int64 {
 	var result []int64
 	segNum := startNumber

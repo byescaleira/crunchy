@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	widevine "github.com/iyear/gowidevine"
+	"github.com/Eyevinn/mp4ff/mp4"
 	"github.com/unki2aut/go-mpd"
 )
 
@@ -72,15 +72,21 @@ func downloadPart(url string) ([]byte, error) {
 func getFilename(set *mpd.AdaptationSet) string {
 	if set == nil {
 		f, _ := os.CreateTemp("", "crdl-subs-*.ass")
-		return f.Name()
+		name := f.Name()
+		f.Close()
+		return name
 	}
 	for _, representation := range set.Representations {
 		if representation.Height != nil {
 			f, _ := os.CreateTemp("", "crdl-video-*.mp4")
-			return f.Name()
+			name := f.Name()
+			f.Close()
+			return name
 		} else if representation.Bandwidth != nil {
 			f, _ := os.CreateTemp("", "crdl-audio-*.mp3")
-			return f.Name()
+			name := f.Name()
+			f.Close()
+			return name
 		}
 	}
 	return ""
@@ -100,7 +106,11 @@ func downloadParts(baseUrl, representationId *string, set *mpd.AdaptationSet) (s
 
 	timeline := expandTimeline(set.SegmentTemplate.SegmentTimeline.S, 1)
 	total := len(timeline)
-	results := make([][]byte, total)
+	// segFiles holds the on-disk path of each downloaded segment, in order.
+	// Segments are written straight to temp files instead of accumulated in
+	// memory, so downloading a heavy episode no longer keeps the whole file in
+	// RAM (which was freezing the machine once it grew past available memory).
+	segFiles := make([]string, total)
 	var downloadErr error
 	var errOnce sync.Once
 	var done atomic.Int64
@@ -118,7 +128,20 @@ func downloadParts(baseUrl, representationId *string, set *mpd.AdaptationSet) (s
 					errOnce.Do(func() { downloadErr = err })
 					return
 				}
-				results[job.index] = data
+				tmp, err := os.CreateTemp("", "crdl-seg-*.mp4")
+				if err != nil {
+					errOnce.Do(func() { downloadErr = err })
+					return
+				}
+				name := tmp.Name()
+				_, err = tmp.Write(data)
+				tmp.Close()
+				if err != nil {
+					os.Remove(name)
+					errOnce.Do(func() { downloadErr = err })
+					return
+				}
+				segFiles[job.index] = name
 				count := done.Add(1)
 				fmt.Printf("\rDownloaded %v of %v segments (%v%%)", count, total, (100*count)/int64(total))
 			}
@@ -133,28 +156,95 @@ func downloadParts(baseUrl, representationId *string, set *mpd.AdaptationSet) (s
 	wg.Wait()
 
 	if downloadErr != nil {
+		removeFiles(segFiles)
 		return "", downloadErr
 	}
 
 	fmt.Println("\nFinished downloading!")
 
-	var parts []byte
-	parts = append(parts, initData...)
-	for _, data := range results {
-		parts = append(parts, data...)
-	}
-
+	// Decrypt segment-by-segment straight from the temp files into the output
+	// file. This keeps only one segment in memory at a time during decryption,
+	// instead of decoding the whole file into RAM like widevine.DecryptMP4Auto.
 	filename := getFilename(set)
-	file, err := os.Create(filename)
-	if err != nil {
+	if err := decryptSegmentsToFile(initData, segFiles, filename); err != nil {
+		os.Remove(filename)
+		removeFiles(segFiles)
 		return "", err
 	}
-	defer file.Close()
-	if err = widevine.DecryptMP4Auto(io.NopCloser(bytes.NewReader(parts)), keys, file); err != nil {
-		return "", fmt.Errorf("widevine.DecryptMP4Auto: %w", err)
+	removeFiles(segFiles)
+	return filename, nil
+}
+
+// removeFiles deletes every non-empty path in files, ignoring errors so a
+// missing file (already removed, or never created on a failed worker) is a
+// no-op.
+func removeFiles(files []string) {
+	for _, f := range files {
+		if f != "" {
+			os.Remove(f)
+		}
+	}
+}
+
+// decryptSegmentsToFile decrypts the init segment followed by each media
+// segment into outputFile, reading one segment at a time. Decoding init + a
+// single segment per iteration lets mp4ff resolve the encryption context from
+// the moov (needed for correct senc parsing under both CENC and CBCS) while
+// keeping memory bounded to one segment's mdat instead of the whole file.
+func decryptSegmentsToFile(initData []byte, segFiles []string, outputFile string) error {
+	key, err := contentKey(keys)
+	if err != nil {
+		return err
 	}
 
-	return filename, nil
+	out, err := os.Create(outputFile)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	var decryptInfo mp4.DecryptInfo
+	for i, segFile := range segFiles {
+		f, err := os.Open(segFile)
+		if err != nil {
+			return fmt.Errorf("open segment %d: %w", i, err)
+		}
+		inMp4, err := mp4.DecodeFile(io.MultiReader(bytes.NewReader(initData), f))
+		f.Close()
+		if err != nil {
+			return fmt.Errorf("decode segment %d: %w", i, err)
+		}
+		if i == 0 {
+			if inMp4.Init == nil {
+				return fmt.Errorf("no init part of file")
+			}
+			decryptInfo, err = mp4.DecryptInit(inMp4.Init)
+			if err != nil {
+				return fmt.Errorf("decrypt init: %w", err)
+			}
+			if err = inMp4.Init.Encode(out); err != nil {
+				return fmt.Errorf("write init: %w", err)
+			}
+		}
+		for _, seg := range inMp4.Segments {
+			if err = mp4.DecryptSegment(seg, decryptInfo, key); err != nil {
+				if err.Error() == "no senc box in traf" {
+					// No SENC box: samples may be unencrypted here, skip
+					// decryption for this segment. Mirrors widevine.DecryptMP4.
+					err = nil
+				} else {
+					return fmt.Errorf("decrypt segment %d: %w", i, err)
+				}
+			}
+			if err = seg.Encode(out); err != nil {
+				return fmt.Errorf("encode segment %d: %w", i, err)
+			}
+		}
+		// Drop this segment's temp file as soon as it's in the output so disk
+		// usage stays close to one copy of the media, not two.
+		os.Remove(segFile)
+	}
+	return nil
 }
 
 func downloadSubs(url string) string {
@@ -187,24 +277,27 @@ func downloadSubs(url string) string {
 	return filename
 }
 
-func downloadEpisode(baseContentId string, info EpisodeInfo, audioLangs, subsLangs []string, videoQuality, audioQuality *string) {
-	sanitize := func(s string) string {
-		if s == "" {
-			return "Unknown"
-		}
-
-		// Characters that are illegal in Windows filenames or break the final path
-		illegal := []string{"\\", "/", ":", "*", "?", "\"", "<", ">", "|", "'", "’", "`", "“", "”"}
-		res := s
-		for _, char := range illegal {
-			res = strings.ReplaceAll(res, char, "_")
-		}
-		for strings.Contains(res, "__") {
-			res = strings.ReplaceAll(res, "__", "_")
-		}
-		return strings.TrimRight(res, " .")
+// sanitize replaces characters that are illegal in Windows filenames (or break
+// the final path) with underscores, collapses repeated underscores, and trims
+// trailing spaces/dots. An empty string becomes "Unknown".
+func sanitize(s string) string {
+	if s == "" {
+		return "Unknown"
 	}
 
+	// Characters that are illegal in Windows filenames or break the final path
+	illegal := []string{"\\", "/", ":", "*", "?", "\"", "<", ">", "|", "'", "’", "`", "“", "”"}
+	res := s
+	for _, char := range illegal {
+		res = strings.ReplaceAll(res, char, "_")
+	}
+	for strings.Contains(res, "__") {
+		res = strings.ReplaceAll(res, "__", "_")
+	}
+	return strings.TrimRight(res, " .")
+}
+
+func downloadEpisode(baseContentId string, info EpisodeInfo, audioLangs, subsLangs []string, videoQuality, audioQuality *string) {
 	cleanSeriesTitle := sanitize(info.EpisodeMetadata.SeriesTitle)
 	cleanEpisodeTitle := sanitize(info.Title)
 
@@ -278,7 +371,7 @@ func downloadEpisode(baseContentId string, info EpisodeInfo, audioLangs, subsLan
 			deleteStream(id, sToken)
 		}
 		if r := recover(); r != nil {
-			print("Recovered from error:", r)
+			fmt.Printf("Recovered from error: %v\n", r)
 		}
 	}()
 
@@ -336,7 +429,10 @@ func downloadEpisode(baseContentId string, info EpisodeInfo, audioLangs, subsLan
 			panic(fmt.Sprintf("getLicense for %s: %s", version.locale, err))
 		}
 
-		audioSet := manifest.Period[0].AdaptationSets[1]
+		audioSet, err := findAdaptationSet(manifest, "audio")
+		if err != nil {
+			panic(fmt.Sprintf("audio set: %s", err))
+		}
 		fmt.Printf("Downloading %s audio...\n", trackTitle(version.locale))
 		audioBaseUrl, audioRepresentationId := getBaseUrl(audioSet, false, *audioQuality)
 		if audioBaseUrl == nil {
@@ -351,7 +447,10 @@ func downloadEpisode(baseContentId string, info EpisodeInfo, audioLangs, subsLan
 		// The video track is identical across dubs, so download it once using
 		// the first version's keys (already loaded above).
 		if i == 0 {
-			videoSet := manifest.Period[0].AdaptationSets[0]
+			videoSet, err := findAdaptationSet(manifest, "video")
+			if err != nil {
+				panic(fmt.Sprintf("video set: %s", err))
+			}
 			fmt.Println("Downloading video...")
 			baseUrl, representationId := getBaseUrl(videoSet, true, *videoQuality)
 			if baseUrl == nil {
