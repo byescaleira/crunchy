@@ -9,8 +9,8 @@
    layered surfaces, system font stack (no web fonts), generous rounded cards
    with a subtle hover lift, a translucent glass top bar, slim progress bars,
    and a full-bleed cinematic hero scrim. The system font keeps it native and
-   fast; every accent stays restrained — primary blue for action, green/red
-   for done/error, amber for warnings. All motion is frozen under
+   fast; every accent stays restrained — Crunchyroll orange for action/brand,
+   green/red for done/error, amber for warnings. All motion is frozen under
    prefers-reduced-motion. */
 @import "tailwindcss";
 
@@ -19,9 +19,10 @@
 }
 
 /* appletv — the only theme. Near-black surfaces (#08080A → #131316 → #1C1C1F),
-   off-white content, Apple-system primary blue, and the Apple-system semantic
-   accents (amber warning, green success, red error, cyan info). Box radius
-   1rem gives the rounded card feel; field/select slightly tighter. */
+   off-white content, Crunchyroll orange (#FF640C) as the primary/brand color,
+   and the Apple-system semantic accents (amber warning, green success, red
+   error, cyan info). Box radius 1rem gives the rounded card feel; field/select
+   slightly tighter. */
 @plugin "daisyui/theme" {
   name: "appletv";
   default: true;
@@ -32,7 +33,7 @@
   --color-base-300: #1C1C1F;
   --color-base-content: #F5F5F7;
 
-  --color-primary: #0A84FF;
+  --color-primary: #FF640C;
   --color-primary-content: #FFFFFF;
 
   --color-secondary: #5E5CE6;

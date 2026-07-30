@@ -144,7 +144,7 @@ func navbar(active string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = iconReel("h-6 w-6 text-primary shrink-0").Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = iconCrunchy("h-7 w-7 shrink-0").Render(ctx, templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

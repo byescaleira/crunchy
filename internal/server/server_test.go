@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"crunchyroll-downloader/internal/download"
 	"crunchyroll-downloader/internal/jobs"
@@ -71,6 +72,7 @@ func newTestServer(t *testing.T) *Server {
 		dataDir:      dir,
 		cfgPath:      filepath.Join(dir, "config.json"),
 		restartOpts:  map[string]DownloadOpts{},
+		doneGrace:   defaultDoneGrace,
 	}
 }
 
@@ -1178,5 +1180,88 @@ func TestAPI_CORSHeaders(t *testing.T) {
 	h.ServeHTTP(w6, r6)
 	if got := w6.Header().Get("Access-Control-Allow-Origin"); got != "" {
 		t.Errorf("CORS must be scoped to /api/*, but /settings got ACAO=%q", got)
+	}
+}
+
+// waitUntil polls cond until it returns true or the timeout elapses, for tests
+// that assert an asynchronous watcher goroutine eventually does its work.
+func waitUntil(t *testing.T, timeout time.Duration, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("condition never became true within timeout")
+}
+
+// TestSortSeasonEpisodesAscending asserts a season's episodes are sorted by
+// episode number so a download starts at the smallest episode and climbs.
+func TestSortSeasonEpisodesAscending(t *testing.T) {
+	eps := []media.SeasonEpisode{{EpisodeNumber: 3}, {EpisodeNumber: 1}, {EpisodeNumber: 2}}
+	sortSeasonEpisodesAscending(eps)
+	for i, want := range []int{1, 2, 3} {
+		if eps[i].EpisodeNumber != want {
+			t.Errorf("eps[%d] = %d, want %d", i, eps[i].EpisodeNumber, want)
+		}
+	}
+}
+
+// TestSortSeasonsAscending asserts a series' seasons are sorted by season number
+// so a series download starts at season 1 and climbs.
+func TestSortSeasonsAscending(t *testing.T) {
+	seasons := []media.Season{{SeasonNumber: 2}, {SeasonNumber: 1}, {SeasonNumber: 3}}
+	sortSeasonsAscending(seasons)
+	for i, want := range []int{1, 2, 3} {
+		if seasons[i].SeasonNumber != want {
+			t.Errorf("seasons[%d] = %d, want %d", i, seasons[i].SeasonNumber, want)
+		}
+	}
+}
+
+// TestEnqueue_AutoRemovesDoneJob enqueues an episode that completes successfully
+// and asserts the watchJob watcher removes it from the Manager (and clears its
+// stored restart opts) once the grace elapses — completed downloads disappear
+// from the list. doneGrace is shortened to keep the test fast.
+func TestEnqueue_AutoRemovesDoneJob(t *testing.T) {
+	s := newTestServer(t)
+	s.doneGrace = 30 * time.Millisecond
+	s.buildTask = func(string, DownloadOpts) jobs.Task {
+		return func(context.Context, download.Progress) error { return nil }
+	}
+	js, err := s.enqueue("episode", "EP1", DownloadOpts{AudioLangs: []string{"ja-JP"}})
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	id := js[0].ID
+	<-js[0].Done()
+	waitUntil(t, time.Second, func() bool {
+		_, ok := s.manager.Get(id)
+		return !ok
+	})
+	if _, ok := s.restartOptsFor(id); ok {
+		t.Errorf("restartOpts should be cleared for an auto-removed done job")
+	}
+}
+
+// TestEnqueue_KeepsFailedJob enqueues an episode that fails and asserts it is NOT
+// auto-removed — failed jobs stay so the user can see the failure and Restart or
+// Delete. Only successful (done) jobs auto-remove.
+func TestEnqueue_KeepsFailedJob(t *testing.T) {
+	s := newTestServer(t)
+	s.doneGrace = 30 * time.Millisecond
+	s.buildTask = func(string, DownloadOpts) jobs.Task {
+		return func(context.Context, download.Progress) error { return fmt.Errorf("boom") }
+	}
+	js, err := s.enqueue("episode", "EP1", DownloadOpts{AudioLangs: []string{"ja-JP"}})
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	<-js[0].Done()
+	time.Sleep(100 * time.Millisecond) // past doneGrace
+	if _, ok := s.manager.Get(js[0].ID); !ok {
+		t.Errorf("failed job should NOT be auto-removed, but it was")
 	}
 }

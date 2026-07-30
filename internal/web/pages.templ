@@ -30,6 +30,19 @@ templ SettingsPage(saved bool, errText string, maxConcurrent int) {
 					Paste your <code class="font-mono text-primary">etp_rt</code> cookie. It stays on this machine
 					(127.0.0.1) and is never logged.
 				</p>
+				<button
+					class="btn btn-outline rounded-full gap-1.5 self-start"
+					hx-post="/settings/find-cookies"
+					hx-target="#settings-result"
+					hx-disabled-elt="this"
+				>
+					@iconSearch("h-4 w-4")
+					<span>Find token in my browser</span>
+				</button>
+				<p class="text-xs text-white/40">
+					Scans Chrome, Brave, Edge, Arc, Firefox, and Safari for the etp_rt cookie. Log in to
+					crunchyroll.com in your browser first, then click Find — it's also the refresh.
+				</p>
 				<form hx-post="/settings" hx-target="#settings-result" class="flex flex-col gap-3">
 					<label class="form-control">
 						<span class="label-text mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45">etp_rt cookie</span>

@@ -16,7 +16,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
+	"time"
 
 	"github.com/a-h/templ"
 
@@ -92,6 +94,7 @@ type Server struct {
 	outputDir        string
 	cfg              config // single source of truth for persisted prefs (mu-guarded)
 	restartOpts      map[string]DownloadOpts // opts to re-enqueue a job by id (mu-guarded); restart is per-episode
+	doneGrace        time.Duration           // how long a done job lingers before auto-removal (watchJob)
 }
 
 // New creates a Server rooted at dataDir. If etpRt is empty it tries to load it
@@ -107,6 +110,7 @@ func New(dataDir, etpRt string, debug bool) (*Server, error) {
 		cfgPath:     filepath.Join(dataDir, "config.json"),
 		debug:       debug,
 		restartOpts: map[string]DownloadOpts{},
+		doneGrace:   defaultDoneGrace,
 	}
 
 	// Always load the saved config so the last-used download prefs (and the
@@ -242,6 +246,7 @@ func makeSeasonTaskBuilder(client *crunchy.Client, debug bool) func(string, Down
 		if err != nil {
 			return nil, fmt.Errorf("list season episodes: %w", err)
 		}
+		sortSeasonEpisodesAscending(episodes)
 		groupLabel := seasonLabel(episodes)
 		specs := make([]jobs.JobSpec, 0, len(episodes))
 		for _, ep := range episodes {
@@ -261,12 +266,14 @@ func makeSeriesTaskBuilder(client *crunchy.Client, debug bool) func(string, Down
 		if err != nil {
 			return nil, fmt.Errorf("list seasons: %w", err)
 		}
+		sortSeasonsAscending(seasons)
 		var specs []jobs.JobSpec
 		for _, s := range seasons {
 			episodes, err := client.GetSeasonEpisodes(s.ID, "ja-JP", "en-US")
 			if err != nil {
 				return nil, fmt.Errorf("list season %v episodes: %w", s.SeasonNumber, err)
 			}
+			sortSeasonEpisodesAscending(episodes)
 			groupLabel := seasonLabel(episodes)
 			for _, ep := range episodes {
 				specs = append(specs, seasonEpisodeSpec(client, debug, ep, opts, s.ID, groupLabel))
@@ -338,6 +345,26 @@ func seasonLabel(episodes []media.SeasonEpisode) string {
 	return fmt.Sprintf("Season %v", ep.SeasonNumber)
 }
 
+// sortSeasonEpisodesAscending orders a season's episodes by episode number so a
+// download starts at the smallest episode and climbs to the largest. The CMS
+// usually returns them in order, but the user wants this guaranteed regardless
+// of the API's ordering, so we sort explicitly before building specs (enqueue
+// order = download start order, since the Manager's slot semaphore is FIFO).
+func sortSeasonEpisodesAscending(episodes []media.SeasonEpisode) {
+	sort.Slice(episodes, func(i, j int) bool {
+		return episodes[i].EpisodeNumber < episodes[j].EpisodeNumber
+	})
+}
+
+// sortSeasonsAscending orders a series' seasons by season number so a series
+// download starts at season 1 and climbs, and each season's episodes are sorted
+// by sortSeasonEpisodesAscending before its specs are built.
+func sortSeasonsAscending(seasons []media.Season) {
+	sort.Slice(seasons, func(i, j int) bool {
+		return seasons[i].SeasonNumber < seasons[j].SeasonNumber
+	})
+}
+
 // enqueue routes a download request to the right Manager method by granularity,
 // returning the resulting jobs. episode → Enqueue (one job, enriched with the
 // episode title/thumbnail from GetEpisodeInfo); season / series → EnqueueMany
@@ -362,6 +389,7 @@ func (s *Server) enqueue(kind, id string, opts DownloadOpts) ([]*jobs.Job, error
 		created := s.manager.EnqueueMany(specs)
 		for _, j := range created {
 			s.storeRestart(j.ID, opts)
+			s.watchJob(j)
 		}
 		return created, nil
 	case "series":
@@ -375,6 +403,7 @@ func (s *Server) enqueue(kind, id string, opts DownloadOpts) ([]*jobs.Job, error
 		created := s.manager.EnqueueMany(specs)
 		for _, j := range created {
 			s.storeRestart(j.ID, opts)
+			s.watchJob(j)
 		}
 		return created, nil
 	default:
@@ -393,6 +422,7 @@ func (s *Server) enqueue(kind, id string, opts DownloadOpts) ([]*jobs.Job, error
 			Task:          buildTask(id, opts),
 		})
 		s.storeRestart(j.ID, opts)
+		s.watchJob(j)
 		return []*jobs.Job{j}, nil
 	}
 }
@@ -432,6 +462,32 @@ func (s *Server) clearRestart(id string) {
 // errNotConfigured is returned by enqueue when no token is on file.
 var errNotConfigured = fmt.Errorf("save your etp_rt token in Settings first")
 
+// defaultDoneGrace is how long a successfully completed job stays on the page
+// before it auto-removes. Long enough for the user to see the green "Done" + 100%
+// state, short enough that finished episodes don't pile up in the list. Failed /
+// cancelled jobs are NOT auto-removed — they stay so the user can see the failure
+// and Restart or Delete.
+const defaultDoneGrace = 2 * time.Second
+
+// watchJob auto-removes a job once it completes successfully, after s.doneGrace
+// so the card's "Done" state is visible before it fades. Failed/cancelled jobs
+// are left in place. It also clears the stored restart opts for the id so the map
+// can't grow unbounded across a long session (auto-removal bypasses the Delete
+// route, which would otherwise clear them). The Manager stays a pure lifecycle
+// library — this auto-remove is a server-level UI policy, so it lives here.
+func (s *Server) watchJob(j *jobs.Job) {
+	go func() {
+		<-j.Done()
+		if j.Status() != jobs.StatusDone {
+			return
+		}
+		time.Sleep(s.doneGrace)
+		if s.manager.Delete(j.ID) {
+			s.clearRestart(j.ID)
+		}
+	}()
+}
+
 // Handler returns the routes. It uses Go 1.22 ServeMux method+pattern routing.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -440,6 +496,7 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /settings", s.handleSettings)
 	mux.HandleFunc("POST /settings", s.handleSettingsPost)
+	mux.HandleFunc("POST /settings/find-cookies", s.handleSettingsFindCookies)
 	mux.HandleFunc("POST /settings/downloads", s.handleSettingsDownloadsPost)
 	mux.HandleFunc("GET /browse", s.handleBrowse)
 	mux.HandleFunc("GET /series/{id}", s.handleSeriesDetail)

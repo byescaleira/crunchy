@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"crunchyroll-downloader/internal/browser"
 	"crunchyroll-downloader/internal/crunchy"
 	"crunchyroll-downloader/internal/media"
 	"crunchyroll-downloader/internal/web"
@@ -46,6 +47,35 @@ func (s *Server) handleSettingsPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	render(w, r, web.Alert("success", "Token saved and verified."))
+}
+
+// handleSettingsFindCookies scans the user's local browser cookie stores for the
+// etp_rt cookie and, on a hit, saves + verifies it via configure (the same path
+// the paste form uses). The token is never rendered, logged, or put in an error
+// — the messages name the browser it came from, never the value. On a miss the
+// user is told to log in to crunchyroll.com in their browser and click Find
+// again (the button is the refresh). This is an HTML POST under /settings, not
+// /api/*, so CORS is unchanged.
+func (s *Server) handleSettingsFindCookies(w http.ResponseWriter, r *http.Request) {
+	value, browserName, err := browser.FindEtpRt()
+	if err != nil {
+		// err is non-sensitive (permission / parse / keychain), never the token.
+		render(w, r, web.Alert("error", "Could not read browser cookies: "+err.Error()))
+		return
+	}
+	if value == "" {
+		render(w, r, web.Alert("warning",
+			"No etp_rt cookie found. Log in to crunchyroll.com in your browser, "+
+				"then click Find again."))
+		return
+	}
+	if err := s.configure(value, s.outputDir); err != nil {
+		// configure returns a transport/token error, never the token itself.
+		render(w, r, web.Alert("error",
+			"Found a token in "+browserName+" but it could not be verified: "+err.Error()))
+		return
+	}
+	render(w, r, web.Alert("success", "Token found in "+browserName+" and saved."))
 }
 
 // handleSettingsDownloadsPost persists the max-concurrent-downloads preference.
