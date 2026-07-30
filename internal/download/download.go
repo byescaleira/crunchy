@@ -57,6 +57,7 @@ type Downloader struct {
 	MaxWorkers   int
 	Debug        bool
 	Progress     Progress
+	OutputDir    string
 
 	// The I/O steps are overridable func fields so the orchestration (the
 	// keys-ordering invariant, the per-track sequence) can be tested without
@@ -383,14 +384,18 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) error
 	cleanSeriesTitle := output.Sanitize(info.EpisodeMetadata.SeriesTitle)
 	cleanEpisodeTitle := output.Sanitize(info.Title)
 
-	if _, err := os.Stat(cleanSeriesTitle); err != nil {
-		_ = os.MkdirAll(cleanSeriesTitle, 0777)
+	// OutputDir lets the server direct downloads into a user-chosen folder; the
+	// CLI leaves it empty so the series directory is created relative to the CWD,
+	// matching the pre-refactor behavior.
+	seriesDir := filepath.Join(d.OutputDir, cleanSeriesTitle)
+	if _, err := os.Stat(seriesDir); err != nil {
+		_ = os.MkdirAll(seriesDir, 0777)
 	}
 
 	videoQuality := &d.VideoQuality
 	audioQuality := &d.AudioQuality
 
-	outputFile := filepath.Join(cleanSeriesTitle, fmt.Sprintf("%s S%02dE%02d - %s [%s].mkv",
+	outputFile := filepath.Join(seriesDir, fmt.Sprintf("%s S%02dE%02d - %s [%s].mkv",
 		cleanSeriesTitle,
 		info.EpisodeMetadata.SeasonNumber,
 		info.EpisodeMetadata.EpisodeNumber,

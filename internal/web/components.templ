@@ -5,8 +5,9 @@ import (
 	"crunchyroll-downloader/internal/media"
 )
 
-// alert renders a DaisyUI alert. kind is one of error/success/warning/info.
-templ alert(kind, msg string) {
+// Alert renders a DaisyUI alert. kind is one of error/success/warning/info.
+// Exported so the server can render it standalone as an HTMX partial.
+templ Alert(kind, msg string) {
 	<div class={ "alert " + alertClass(kind) }>
 		<span>{ msg }</span>
 	</div>
@@ -66,18 +67,24 @@ templ progressBar(j *jobs.Job) {
 }
 
 // jobCard renders one job: label, status badge, progress bar, and an error line
-// if it failed. The card's id lets the SSE handler target it for swaps.
+// if it failed. The card's id lets the SSE handler target it for swaps; the
+// data-job-sse attribute opts the card into the JobsPage EventSource script,
+// and the progress/status element ids let that script update them live.
 templ jobCard(j *jobs.Job) {
-	<div class="card bg-base-100 shadow border border-base-300" id={ "job-" + j.ID }>
+	<div class="card bg-base-100 shadow border border-base-300" id={ "job-" + j.ID } data-job-sse={ j.ID }>
 		<div class="card-body gap-2">
 			<div class="flex items-center justify-between gap-2">
 				<h3 class="card-title text-base truncate">{ j.Label }</h3>
-				@statusBadge(j.Status())
+				<span class={ "badge " + statusBadgeClass(string(j.Status())) } id={ "job-" + j.ID + "-status" }>{ string(j.Status()) }</span>
 			</div>
-			@progressBar(j)
-			if j.Status() == "error" {
-				<div class="text-xs text-error font-mono break-all">{ j.Error() }</div>
-			}
+			<div id={ "job-" + j.ID + "-progress" }>
+				@progressBar(j)
+			</div>
+			<div id={ "job-" + j.ID + "-error" }>
+				if j.Status() == "error" {
+					<div class="text-xs text-error font-mono break-all">{ j.Error() }</div>
+				}
+			</div>
 		</div>
 	</div>
 }

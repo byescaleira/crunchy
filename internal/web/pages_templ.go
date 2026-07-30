@@ -53,12 +53,12 @@ func SettingsPage(saved bool, errText string) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			if errText != "" {
-				templ_7745c5c3_Err = alert("error", errText).Render(ctx, templ_7745c5c3_Buffer)
+				templ_7745c5c3_Err = Alert("error", errText).Render(ctx, templ_7745c5c3_Buffer)
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			} else if saved {
-				templ_7745c5c3_Err = alert("success", "Token saved and verified.").Render(ctx, templ_7745c5c3_Buffer)
+				templ_7745c5c3_Err = Alert("success", "Token saved and verified.").Render(ctx, templ_7745c5c3_Buffer)
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
@@ -129,11 +129,11 @@ func BrowsePage(seasons []media.Season, seriesURL string, errText string) templ.
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = seasonsList(seasons, errText).Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = SeasonsList(seasons, errText).Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "</div></div></div><div class=\"card bg-base-100 shadow border border-base-300\"><div class=\"card-body gap-2\"><h2 class=\"card-title\">Episodes</h2><div id=\"episodes\" class=\"flex flex-col gap-2\"><p class=\"text-sm text-base-content/50\">Select a season to list its episodes.</p></div></div></div></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "</div></div></div><div class=\"card bg-base-100 shadow border border-base-300\"><div class=\"card-body gap-2\"><h2 class=\"card-title\">Episodes</h2><div id=\"episodes\" class=\"flex flex-col gap-2\"><p class=\"text-sm text-base-content/50\">Select a season to list its episodes.</p></div></div></div></div><div class=\"mt-4\"><h2 class=\"card-title mb-2\">Download jobs</h2><div id=\"jobs\" class=\"flex flex-col gap-2\"><p class=\"text-sm text-base-content/50\">Select episodes above and start a download.</p></div></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -148,7 +148,7 @@ func BrowsePage(seasons []media.Season, seriesURL string, errText string) templ.
 }
 
 // seasonsList is the HTMX partial swapped into #seasons after a /browse POST.
-func seasonsList(seasons []media.Season, errText string) templ.Component {
+func SeasonsList(seasons []media.Season, errText string) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
@@ -170,7 +170,7 @@ func seasonsList(seasons []media.Season, errText string) templ.Component {
 		}
 		ctx = templ.ClearChildren(ctx)
 		if errText != "" {
-			templ_7745c5c3_Err = alert("error", errText).Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = Alert("error", errText).Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -216,7 +216,7 @@ func EpisodesTable(episodes []media.SeasonEpisode, errText string) templ.Compone
 		}
 		ctx = templ.ClearChildren(ctx)
 		if errText != "" {
-			templ_7745c5c3_Err = alert("error", errText).Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = Alert("error", errText).Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -294,11 +294,11 @@ func JobsPage(js []*jobs.Job) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = jobsList(js).Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = JobsList(js).Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "</div></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "</div></div><script>\n\t\t\t(function () {\n\t\t\t\tdocument.querySelectorAll(\"[data-job-sse]\").forEach(function (card) {\n\t\t\t\t\tvar id = card.getAttribute(\"data-job-sse\");\n\t\t\t\t\tvar es = new EventSource(\"/jobs/\" + id + \"/events\");\n\t\t\t\t\tes.addEventListener(\"segment\", function (e) {\n\t\t\t\t\t\tvar d = JSON.parse(e.data);\n\t\t\t\t\t\tvar box = document.getElementById(\"job-\" + id + \"-progress\");\n\t\t\t\t\t\tvar bar = box && box.querySelector(\"progress\");\n\t\t\t\t\t\tif (bar && d.total > 0) {\n\t\t\t\t\t\t\tbar.value = (d.done * 100) / d.total;\n\t\t\t\t\t\t}\n\t\t\t\t\t});\n\t\t\t\t\tes.addEventListener(\"status\", function (e) {\n\t\t\t\t\t\tvar d = JSON.parse(e.data);\n\t\t\t\t\t\tvar badge = document.getElementById(\"job-\" + id + \"-status\");\n\t\t\t\t\t\tif (badge) {\n\t\t\t\t\t\t\tbadge.textContent = d.status;\n\t\t\t\t\t\t\tbadge.className = \"badge \" + ({\n\t\t\t\t\t\t\t\tqueued: \"badge-ghost\",\n\t\t\t\t\t\t\t\tdownloading: \"badge-warning\",\n\t\t\t\t\t\t\t\tmuxing: \"badge-info\",\n\t\t\t\t\t\t\t\tdone: \"badge-success\",\n\t\t\t\t\t\t\t\terror: \"badge-error\"\n\t\t\t\t\t\t\t}[d.status] || \"badge-ghost\");\n\t\t\t\t\t\t}\n\t\t\t\t\t\tif (d.status === \"error\") {\n\t\t\t\t\t\t\tvar err = document.getElementById(\"job-\" + id + \"-error\");\n\t\t\t\t\t\t\tif (err && d.message) {\n\t\t\t\t\t\t\t\terr.innerHTML = '<div class=\"text-xs text-error font-mono break-all\"></div>';\n\t\t\t\t\t\t\t\terr.firstChild.textContent = d.message;\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t}\n\t\t\t\t\t});\n\t\t\t\t\tes.addEventListener(\"done\", function () {\n\t\t\t\t\t\tes.close();\n\t\t\t\t\t});\n\t\t\t\t\tes.addEventListener(\"error\", function () {\n\t\t\t\t\t\tes.close();\n\t\t\t\t\t});\n\t\t\t\t});\n\t\t\t})();\n\t\t</script>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -314,7 +314,7 @@ func JobsPage(js []*jobs.Job) templ.Component {
 
 // jobsList is the HTMX partial swapped into #jobs-list by /jobs (GET) and the
 // refresh button.
-func jobsList(js []*jobs.Job) templ.Component {
+func JobsList(js []*jobs.Job) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {

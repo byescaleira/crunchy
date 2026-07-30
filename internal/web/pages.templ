@@ -30,9 +30,9 @@ templ SettingsPage(saved bool, errText string) {
 				</form>
 				<div id="settings-result">
 					if errText != "" {
-						@alert("error", errText)
+						@Alert("error", errText)
 					} else if saved {
-						@alert("success", "Token saved and verified.")
+						@Alert("success", "Token saved and verified.")
 					}
 				</div>
 			</div>
@@ -59,7 +59,7 @@ templ BrowsePage(seasons []media.Season, seriesURL string, errText string) {
 						<button class="btn btn-primary self-start">List seasons</button>
 					</form>
 					<div id="seasons" class="flex flex-col gap-2">
-						@seasonsList(seasons, errText)
+						@SeasonsList(seasons, errText)
 					</div>
 				</div>
 			</div>
@@ -72,13 +72,19 @@ templ BrowsePage(seasons []media.Season, seriesURL string, errText string) {
 				</div>
 			</div>
 		</div>
+		<div class="mt-4">
+			<h2 class="card-title mb-2">Download jobs</h2>
+			<div id="jobs" class="flex flex-col gap-2">
+				<p class="text-sm text-base-content/50">Select episodes above and start a download.</p>
+			</div>
+		</div>
 	}
 }
 
 // seasonsList is the HTMX partial swapped into #seasons after a /browse POST.
-templ seasonsList(seasons []media.Season, errText string) {
+templ SeasonsList(seasons []media.Season, errText string) {
 	if errText != "" {
-		@alert("error", errText)
+		@Alert("error", errText)
 	}
 	if len(seasons) == 0 && errText == "" {
 		<p class="text-sm text-base-content/50">No seasons yet — paste a series URL above.</p>
@@ -93,7 +99,7 @@ templ seasonsList(seasons []media.Season, errText string) {
 // options that POST to /download.
 templ EpisodesTable(episodes []media.SeasonEpisode, errText string) {
 	if errText != "" {
-		@alert("error", errText)
+		@Alert("error", errText)
 	}
 	if len(episodes) == 0 && errText == "" {
 		<p class="text-sm text-base-content/50">No episodes found.</p>
@@ -158,15 +164,58 @@ templ JobsPage(js []*jobs.Job) {
 				<button class="btn btn-ghost btn-sm" hx-get="/jobs/list" hx-target="#jobs-list">Refresh</button>
 			</div>
 			<div id="jobs-list" class="flex flex-col gap-2">
-				@jobsList(js)
+				@JobsList(js)
 			</div>
 		</div>
+		<script>
+			(function () {
+				document.querySelectorAll("[data-job-sse]").forEach(function (card) {
+					var id = card.getAttribute("data-job-sse");
+					var es = new EventSource("/jobs/" + id + "/events");
+					es.addEventListener("segment", function (e) {
+						var d = JSON.parse(e.data);
+						var box = document.getElementById("job-" + id + "-progress");
+						var bar = box && box.querySelector("progress");
+						if (bar && d.total > 0) {
+							bar.value = (d.done * 100) / d.total;
+						}
+					});
+					es.addEventListener("status", function (e) {
+						var d = JSON.parse(e.data);
+						var badge = document.getElementById("job-" + id + "-status");
+						if (badge) {
+							badge.textContent = d.status;
+							badge.className = "badge " + ({
+								queued: "badge-ghost",
+								downloading: "badge-warning",
+								muxing: "badge-info",
+								done: "badge-success",
+								error: "badge-error"
+							}[d.status] || "badge-ghost");
+						}
+						if (d.status === "error") {
+							var err = document.getElementById("job-" + id + "-error");
+							if (err && d.message) {
+								err.innerHTML = '<div class="text-xs text-error font-mono break-all"></div>';
+								err.firstChild.textContent = d.message;
+							}
+						}
+					});
+					es.addEventListener("done", function () {
+						es.close();
+					});
+					es.addEventListener("error", function () {
+						es.close();
+					});
+				});
+			})();
+		</script>
 	}
 }
 
 // jobsList is the HTMX partial swapped into #jobs-list by /jobs (GET) and the
 // refresh button.
-templ jobsList(js []*jobs.Job) {
+templ JobsList(js []*jobs.Job) {
 	if len(js) == 0 {
 		<p class="text-sm text-base-content/50">No jobs yet.</p>
 	}

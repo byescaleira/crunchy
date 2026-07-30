@@ -13,6 +13,18 @@ You won't be banned or anything, I downloaded all Kaguya-Sama seasons to test du
 - Parallel segment downloads (10 workers) for faster downloads
 - Retry with backoff on connection errors
 - Batch download from a list of URLs
+- **Web control panel** (`crunchy-server`): a single-binary localhost UI to paste your token, browse a series, pick episodes, and watch live download progress over SSE — no Node runtime, all assets embedded
+
+## Web control panel
+
+For an easier alternative to the CLI, build and run the server binary:
+
+```sh
+go build -o crunchy-server ./cmd/crunchy-server
+./crunchy-server            # opens http://127.0.0.1:8080 in your browser
+```
+
+It binds to `127.0.0.1` only (single-user; the `etp_rt` cookie is kept in memory and optionally persisted to `data-dir/config.json` with 0600 — it is never logged). Paste your `etp_rt` in Settings, browse a `/series/` URL, pick episodes, and start a download; the Jobs page streams progress live. Flags: `-addr`, `-etp-rt`, `-data-dir`, `-debug-manifest`, `-no-browser`. The CLI (`cmd/crunchyroll-downloader`) remains available and unchanged.
 
 ## Requirements
 
