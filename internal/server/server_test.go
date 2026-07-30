@@ -311,8 +311,11 @@ func TestSeasonEpisodes(t *testing.T) {
 	if !strings.Contains(got, "kind=episode") || !strings.Contains(got, "id=ep1") || !strings.Contains(got, "id=ep2") {
 		t.Errorf("expected per-episode download buttons, got: %s", got)
 	}
-	if !strings.Contains(got, "en-US") {
-		t.Error("dub version locale not rendered as a badge")
+	// Audio/subtitle locale tags are intentionally not rendered on episode cards
+	// (removed by request); only the Premium badge remains. Assert the locale
+	// does NOT leak onto the card.
+	if strings.Contains(got, ">en-US<") {
+		t.Error("audio locale should not be rendered as a card badge")
 	}
 	if f.episodeReqID != "SEASON42" {
 		t.Errorf("GetSeasonEpisodes got id %q, want SEASON42", f.episodeReqID)

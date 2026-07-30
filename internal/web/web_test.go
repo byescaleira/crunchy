@@ -3,8 +3,6 @@ package web
 import (
 	"strings"
 	"testing"
-
-	"crunchyroll-downloader/internal/media"
 )
 
 func TestStatusBadgeClass(t *testing.T) {
@@ -33,33 +31,6 @@ func TestAlertClass(t *testing.T) {
 	}
 	if got := alertClass("nonsense"); got != "alert" {
 		t.Errorf("alertClass(nonsense) = %q, want alert", got)
-	}
-}
-
-func TestAudioLocales(t *testing.T) {
-	ep := media.SeasonEpisode{
-		AudioLocale: "ja-JP",
-		Versions: []*media.DubVersion{
-			{AudioLocale: "en-US", GUID: "g1"},
-			{AudioLocale: "ja-JP", GUID: "g2"}, // dup of primary
-			{AudioLocale: "es-419", GUID: "g3"},
-		},
-	}
-	got := audioLocales(ep)
-	want := []string{"ja-JP", "en-US", "es-419"}
-	if len(got) != len(want) {
-		t.Fatalf("audioLocales = %v, want %v", got, want)
-	}
-	for i, w := range want {
-		if got[i] != w {
-			t.Errorf("audioLocales[%d] = %q, want %q", i, got[i], w)
-		}
-	}
-}
-
-func TestAudioLocales_Empty(t *testing.T) {
-	if got := audioLocales(media.SeasonEpisode{}); len(got) != 0 {
-		t.Errorf("audioLocales(empty) = %v, want empty", got)
 	}
 }
 

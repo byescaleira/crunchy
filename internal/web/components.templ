@@ -157,13 +157,6 @@ templ episodeCard(ep media.SeasonEpisode) {
 					<span class="badge badge-warning badge-sm font-mono">Premium</span>
 				}
 			</div>
-			if locs := audioLocales(ep); len(locs) > 0 {
-				<div class="flex flex-wrap gap-1 mt-0.5">
-					for _, l := range locs {
-						<span class="px-1.5 py-0.5 rounded-full text-[10px] font-mono text-white/55 bg-white/5 border border-white/10">{ l }</span>
-					}
-				</div>
-			}
 			<div class="mt-1.5">
 				@DownloadButton("episode", ep.ID)
 			</div>

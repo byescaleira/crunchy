@@ -8,8 +8,6 @@ package web
 import (
 	"embed"
 	"fmt"
-
-	"crunchyroll-downloader/internal/media"
 )
 
 // Static is the embedded UI asset tree (app.css, htmx.min.js). It is served by
@@ -129,22 +127,3 @@ func airDate(s string) string {
 	return ""
 }
 
-// audioLocales returns the distinct audio locales available for an episode: the
-// primary audio locale first, then each dub version's locale (deduped, order
-// preserved).
-func audioLocales(ep media.SeasonEpisode) []string {
-	seen := map[string]bool{}
-	var out []string
-	add := func(l string) {
-		if l == "" || seen[l] {
-			return
-		}
-		seen[l] = true
-		out = append(out, l)
-	}
-	add(ep.AudioLocale)
-	for _, v := range ep.Versions {
-		add(v.AudioLocale)
-	}
-	return out
-}

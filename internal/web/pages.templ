@@ -110,7 +110,7 @@ templ BrowsePage(view BrowseView) {
 					<p class="text-sm text-white/40 font-mono mt-3">{ fmt.Sprintf("No results for %q.", view.Query) }</p>
 				}
 				if len(view.Hits) > 0 {
-					<div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-4 md:gap-5 mt-4">
+					<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-5 mt-4">
 						for _, h := range view.Hits {
 							@seriesResultCard(h.ID, h.Title, h.SlugTitle, h.Images, 0)
 						}
@@ -123,7 +123,7 @@ templ BrowsePage(view BrowseView) {
 					<p class="text-sm text-white/40 font-mono mt-3">No series in this category right now.</p>
 				}
 				if len(view.Panels) > 0 {
-					<div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-4 md:gap-5 mt-4">
+					<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-5 mt-4">
 						for _, p := range view.Panels {
 							@seriesResultCard(p.ID, p.Title, p.SlugTitle, p.Images, p.SeriesLaunchYear)
 						}
@@ -136,7 +136,7 @@ templ BrowsePage(view BrowseView) {
 					<p class="text-sm text-white/40 font-mono mt-3">No popular anime available right now.</p>
 				}
 				if len(view.Panels) > 0 {
-					<div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-4 md:gap-5 mt-4">
+					<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-5 mt-4">
 						for _, p := range view.Panels {
 							@seriesResultCard(p.ID, p.Title, p.SlugTitle, p.Images, p.SeriesLaunchYear)
 						}
@@ -180,25 +180,23 @@ func seriesTitleOrBrowse(series media.Series) string {
 	return "Browse"
 }
 
-// seriesResultCard renders one series as an Apple TV browse card: a portrait
-// poster (2:3) that fills the card, with the title + year overlaid at the bottom
-// over a scrim, and a translucent play glyph that fades in on hover. The whole
-// card is a link to the series detail page (/series/{id}) — clicking navigates to
-// the detail screen rather than drilling in inline, so Browse stays a pure
-// discovery surface (popular + categories). The poster (PosterTall, falling
-// back to PosterWide) keeps the card compact in the grid (not a full-screen
-// poster).
+// seriesResultCard renders one series as a miniature of the series-detail hero:
+// a landscape (16:9) key-art backdrop (PosterWide, falling back to PosterTall)
+// with the bottom-up atv-hero-scrim, then a "Series" eyebrow + title + year pill
+// overlaid at the bottom — the same composition as seriesHero, scaled down for
+// the grid. The whole card is a link to the series detail page (/series/{id}),
+// so Browse stays a pure discovery surface (popular + categories).
 templ seriesResultCard(id, title, slug string, img media.Images, year int) {
 	{{
 		var src string
-		if im, ok := media.BestImage(img.PosterTall); ok && im.Source != "" {
+		if im, ok := media.BestImage(img.PosterWide); ok && im.Source != "" {
 			src = im.Source
-		} else if im, ok := media.BestImage(img.PosterWide); ok && im.Source != "" {
+		} else if im, ok := media.BestImage(img.PosterTall); ok && im.Source != "" {
 			src = im.Source
 		}
 	}}
 	<a
-		class="group atv-card atv-lift relative block w-full aspect-[2/3] rounded-box overflow-hidden text-left"
+		class="group atv-card atv-lift relative block w-full aspect-video rounded-box overflow-hidden text-left"
 		href={ "/series/" + id }
 		title={ title }
 	>
@@ -214,16 +212,12 @@ templ seriesResultCard(id, title, slug string, img media.Images, year int) {
 				<span class="font-mono text-xs text-white/25">no art</span>
 			</div>
 		}
-		<div class="absolute inset-0 atv-hero-scrim opacity-90 pointer-events-none"></div>
-		<div class="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none">
-			<span class="flex items-center justify-center h-12 w-12 rounded-full bg-white/15 border border-white/25 backdrop-blur-md shadow-lg">
-				@iconPlay("h-5 w-5 text-white translate-x-0.5")
-			</span>
-		</div>
-		<div class="absolute bottom-0 inset-x-0 p-3 flex flex-col gap-0.5 pointer-events-none">
-			<h3 class="font-display text-sm font-semibold leading-tight line-clamp-2 text-white drop-shadow-md">{ title }</h3>
+		<div class="absolute inset-0 atv-hero-scrim pointer-events-none"></div>
+		<div class="absolute bottom-0 inset-x-0 p-3 md:p-4 flex flex-col gap-1.5 pointer-events-none">
+			<span class="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/70">Series</span>
+			<h3 class="font-display text-sm md:text-base font-semibold leading-tight line-clamp-2 text-white drop-shadow-lg">{ title }</h3>
 			if year != 0 {
-				<span class="text-[11px] font-mono text-white/70 drop-shadow">{ year }</span>
+				<span class="self-start px-2 py-0.5 rounded-full text-[11px] font-medium bg-white/15 text-white backdrop-blur-sm">{ year }</span>
 			}
 		</div>
 	</a>

@@ -12,6 +12,12 @@ templ Layout(title, active string) {
 			<meta charset="UTF-8"/>
 			<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 			<title>{ title } · Crunchy Downloader</title>
+			<link rel="icon" href="/static/favicon/favicon.ico" sizes="any"/>
+			<link rel="icon" href="/static/favicon/favicon-32x32.png" type="image/png" sizes="32x32"/>
+			<link rel="icon" href="/static/favicon/favicon-16x16.png" type="image/png" sizes="16x16"/>
+			<link rel="apple-touch-icon" href="/static/favicon/apple-touch-icon.png"/>
+			<link rel="manifest" href="/static/favicon/site.webmanifest"/>
+			<meta name="theme-color" content="#0b0b0e"/>
 			<link rel="stylesheet" href="/static/app.css"/>
 			<script src="/static/htmx.min.js"></script>
 		</head>
@@ -242,7 +248,7 @@ templ navbar(active string) {
 		<div class="container mx-auto max-w-6xl">
 			<nav class="atv-capsule flex items-center gap-3 rounded-full pl-3 pr-2 py-2">
 				<a class="flex items-center gap-2 px-1.5 shrink-0" href="/browse">
-					@iconCrunchy("h-7 w-7 shrink-0")
+					<img src="/static/favicon/android-chrome-192x192.png" alt="Crunchy Downloader" class="h-7 w-7 shrink-0 rounded-full object-cover"/>
 					<span class="font-semibold tracking-tight text-sm text-white/90 hidden md:inline">Crunchy Downloader</span>
 				</a>
 				<div class="flex items-center gap-1 shrink-0">
