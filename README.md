@@ -1,171 +1,192 @@
 # Crunchy Downloader
 
-Downloads anime from Crunchyroll as `.mkv` or `.mp4`, with multi-language audio
-and subtitles, rich metadata, cover art, and a built-in localhost web control
-panel.
+A Crunchyroll downloader with a built-in localhost web control panel. Download
+anime as `.mkv` or `.mp4` with multiple audio and subtitle languages, rich
+metadata, cover art, and live progress — either from a browser UI or the CLI.
 
-> **Fork credit:** this project is a heavy fork of
-> [CuteTenshii/crunchyroll-downloader](https://github.com/CuteTenshii/crunchyroll-downloader)
-> (originally by [Tenshii/CuteTenshii](https://github.com/CuteTenshii) and its
-> contributors — see the git history). All of the core Crunchyroll/Widevine
-> download machinery originates there. This fork adds a complete embedded web
-> UI, a job queue with live progress, format-aware muxing (MKV **and** MP4),
-> structured server-side logging, and a programmatic `/api/*` surface. Full
-> credit for the downloader foundation goes to the upstream authors; please
-> respect their work and Crunchyroll's terms of service.
+Single Go binaries, no runtime dependencies (besides FFmpeg). The web UI is
+embedded in the server binary; nothing is served from disk.
 
-## Features
+> This project is a fork of
+> [CuteTenshii/crunchyroll-downloader](https://github.com/CuteTenshii/crunchyroll-downloader).
+> Credit for the Crunchyroll client and Widevine decryption machinery goes to
+> the upstream authors. The web control panel, job queue, MP4 muxing,
+> structured logging, and `/api/*` surface were added in this fork.
 
-- Choose audio and subtitle languages, including multiple of each muxed into a
-  single file (first of each is the default track)
-- Choose audio and video quality
-- Decrypts Widevine DRM (requires: a `.wvd` file, or `client_id.bin` +
-  `private_key.pem`)
-- Format-aware mux: `.mkv` (ASS subtitles copied, attached cover) or `.mp4`
-  (ASS → `mov_text`, embedded cover art) with rich metadata (title, show,
-  season/episode, genre, description, rating)
-- One job per episode, N concurrent downloads (default 3)
-- Per-job cancel / delete / restart, season and series batch downloads
-- Parallel segment downloads for speed, retry with backoff on connection errors
-- **Web control panel** (`crunchy-server`): a single-binary localhost UI to
-  paste your token (auto-detected from your browser cookies), browse a series,
-  pick episodes, and watch live download progress over SSE — no Node runtime,
-  all assets embedded
-- Structured server-side logs covering the full download lifecycle (queued →
-  phases → throttled progress → finished, with duration)
+## What it does
 
-## Web control panel
-
-For an easier alternative to the CLI, build and run the server binary:
-
-```sh
-go build -o crunchy-server ./cmd/crunchy-server
-./crunchy-server            # opens http://127.0.0.1:8080 in your browser
-```
-
-It binds to `127.0.0.1` only (single-user; the `etp_rt` cookie is kept in memory
-and optionally persisted to `data-dir/config.json` with 0600 — it is never
-logged). In Settings you can paste your `etp_rt` manually or let the panel
-auto-detect it from your local Chromium/Firefox/Safari cookie store. Browse a
-`/series/` URL, pick episodes, and start a download; the Jobs page streams
-progress live with a per-phase rail and percentage. Flags: `-addr`,
-`-etp-rt`, `-data-dir`, `-debug-manifest`, `-no-browser`. The CLI
-(`cmd/crunchyroll-downloader`) remains available and unchanged.
+- **Web control panel** (`crunchy-server`): open `http://127.0.0.1:8080`, paste
+  your `etp_rt` token (or auto-detect it from your local browser cookies),
+  browse or search a series, pick episodes, and watch downloads progress live
+  over SSE with a per-phase rail and percentage.
+- **CLI** (`crunchyroll-downloader`): the same downloader from the terminal,
+  for single episodes, whole seasons, or a file of URLs.
+- **Multi-language mux**: several audio tracks and subtitle tracks in one file;
+  the first of each is the default track. Output `.mkv` (ASS subtitles copied,
+  cover attached) or `.mp4` (ASS → `mov_text`, cover embedded) with full
+  metadata (title, show, season/episode, genre, description, rating).
+- **Job queue**: one job per episode, N concurrent downloads (default 3),
+  per-job cancel / delete / restart, plus season and series batch downloads.
+- **Structured server logs**: the full download lifecycle — queued → phases →
+  throttled progress → finished — with status, duration, and tags
+  (`job`, `title`, `series`, `ep`).
+- **Programmatic API**: a scoped, origin-restricted `/api/*` surface to enqueue
+  and inspect downloads from your own tooling.
 
 ## Requirements
 
-- [FFmpeg](https://www.ffmpeg.org/download.html#get-packages)
-- To download Premium-only content, a Crunchyroll Premium account. No, this
-  can't be bypassed and a free trial should be enough
-- Either a `.wvd` file, or a `client_id.bin` and a `private_key.pem`
+- **[FFmpeg](https://www.ffmpeg.org/download.html#get-packages)** — muxing.
+- **A Crunchyroll account** — Premium-only content needs a Premium account
+  (this can't be bypassed; a free trial is enough).
+- **A Widevine CDM** — either a `.wvd` file, or `client_id.bin` +
+  `private_key.pem`. (Search "ready to use cdms" if you don't have one.)
 
 ## Download
 
-Check the [latest release](https://github.com/byescaleira/crunchy/releases/latest)
-and download the binary that matches your OS:
+Grab a binary from the [latest release](https://github.com/byescaleira/crunchy/releases/latest):
 
-| OS      | Arch  | Server UI                  | CLI                                |
-|---------|-------|----------------------------|------------------------------------|
-| macOS   | arm64 | `crunchy-server-darwin-arm64`     | `crunchyroll-downloader-darwin-arm64`     |
-| macOS   | amd64 | `crunchy-server-darwin-amd64`     | `crunchyroll-downloader-darwin-amd64`     |
-| Linux   | amd64 | `crunchy-server-linux-amd64`      | `crunchyroll-downloader-linux-amd64`      |
-| Windows | amd64 | `crunchy-server-windows-amd64.exe`| `crunchyroll-downloader-windows-amd64.exe`|
-| Windows | arm64 | `crunchy-server-windows-arm64.exe`| `crunchyroll-downloader-windows-arm64.exe`|
+| OS      | Arch  | Web panel                          | CLI                                       |
+|---------|-------|------------------------------------|-------------------------------------------|
+| macOS   | arm64 | `crunchy-server-darwin-arm64`      | `crunchyroll-downloader-darwin-arm64`     |
+| macOS   | amd64 | `crunchy-server-darwin-amd64`      | `crunchyroll-downloader-darwin-amd64`     |
+| Linux   | amd64 | `crunchy-server-linux-amd64`       | `crunchyroll-downloader-linux-amd64`      |
+| Windows | amd64 | `crunchy-server-windows-amd64.exe` | `crunchyroll-downloader-windows-amd64.exe`|
+| Windows | arm64 | `crunchy-server-windows-arm64.exe` | `crunchyroll-downloader-windows-arm64.exe`|
 
-## Usage (CLI)
+## Web panel
 
-- Open a Terminal/Command prompt in the folder where you downloaded the binary
-- Run the program with the options you want:
-
-```shell
-Usage of ./crunchyroll-downloader:
-  -audio-lang string
-        Audio language(s), comma-separated for multiple (e.g. "ja-JP,en-US"). First is the default track (default "ja-JP")
-  -audio-quality string
-        Audio quality (default "192k")
-  -etp-rt string
-        The "etp_rt" cookie value of your account
-  -format string
-        Output container: "mkv" or "mp4" (default "mkv")
-  -season int
-        Season number. Not used if an episode link is entered
-  -subs-lang string
-        Subtitle language(s), comma-separated for multiple (e.g. "en-US,es-419"). First is the default track (default "en-US")
-  -url string
-        URL of the episode/season to download
-  -file string
-        Path to a text file with one URL per line
-  -video-quality string
-        Video quality (default "1080p")
+```sh
+./crunchy-server            # opens http://127.0.0.1:8080 in your browser
 ```
 
-Ex: to download the first season of *Hell's Paradise* as MP4:
-```shell
-./crunchyroll-downloader --url https://www.crunchyroll.com/series/GJ0H7Q5ZJ/hells-paradise --season 1 --format mp4 --etp-rt replace_this
+It binds to `127.0.0.1` only (single-user). The `etp_rt` cookie is kept in
+memory and optionally persisted to `data-dir/config.json` with mode `0600` — it
+is never logged. In **Settings** you can paste `etp_rt` manually or let the
+panel auto-detect it from your Chromium / Firefox / Safari cookie store. Then
+**Browse**: paste a `https://www.crunchyroll.com/series/...` URL or search by
+title, drill into a season, pick episodes, and download. The **Jobs** page
+streams progress live.
+
+Flags:
+
+```sh
+./crunchy-server -h
+  -addr string         listen address (default "127.0.0.1:8080")
+  -etp-rt string       the "etp_rt" cookie value of your account
+  -data-dir string     where the persisted config lives (default ".crunchy-data")
+  -debug-manifest      log raw episode playback JSON and manifest XML
+  -no-browser          don't open a browser on start
 ```
 
-To download a specific episode:
-```shell
-./crunchyroll-downloader --url https://www.crunchyroll.com/watch/GE00198973JAJP/dawn-and-confusion --etp-rt replace_this
+## CLI
+
+```sh
+./crunchyroll-downloader -h
+  -url string          URL of the episode/season to download
+  -file string         path to a text file with one URL per line
+  -season int          season number (ignored for an episode link)
+  -format string       output container: "mkv" or "mp4" (default "mkv")
+  -audio-lang string   audio language(s), comma-separated; first is default (default "ja-JP")
+  -subs-lang string    subtitle language(s), comma-separated; first is default (default "en-US")
+  -video-quality string  video quality (default "1080p")
+  -audio-quality string  audio quality (default "192k")
+  -etp-rt string        the "etp_rt" cookie value of your account
+  -debug-manifest       log raw episode playback JSON and manifest XML
 ```
 
-To batch download from a file (one URL per line):
-```shell
-./crunchyroll-downloader --file list.txt --etp-rt replace_this --subs-lang pt-BR
+First season of *Hell's Paradise* as MP4:
+```sh
+./crunchyroll-downloader \
+  --url https://www.crunchyroll.com/series/GJ0H7Q5ZJ/hells-paradise \
+  --season 1 --format mp4 --etp-rt REPLACE_THIS
 ```
 
-To mux multiple audio tracks and subtitles into one file (first of each is the
-default track). If a requested language is missing for an episode, that
-episode is skipped:
-```shell
-./crunchyroll-downloader --url https://www.crunchyroll.com/watch/GE00198973JAJP/dawn-and-confusion --etp-rt replace_this --audio-lang ja-JP,en-US --subs-lang en-US,es-419,de-DE
+One episode:
+```sh
+./crunchyroll-downloader \
+  --url https://www.crunchyroll.com/watch/GE00198973JAJP/dawn-and-confusion \
+  --etp-rt REPLACE_THIS
 ```
 
-## Building
+Batch from a file (one URL per line):
+```sh
+./crunchyroll-downloader --file list.txt --etp-rt REPLACE_THIS --subs-lang pt-BR
+```
 
-### Requirements
+Multiple audio + subtitle tracks in one file (first of each is default; an
+episode missing a requested language is skipped):
+```sh
+./crunchyroll-downloader \
+  --url https://www.crunchyroll.com/watch/GE00198973JAJP/dawn-and-confusion \
+  --etp-rt REPLACE_THIS \
+  --audio-lang ja-JP,en-US --subs-lang en-US,es-419,de-DE
+```
 
-- [Go](https://go.dev/dl/)
-- [templ CLI](https://github.com/a-h/templ) (only if you edit `*.templ` UI files)
+## API
 
-### Guide
+The server exposes a small JSON surface for programmatic use (CORS is scoped to
+`/api/*` and restricted to same-origin / no-origin, so drive-by web pages can't
+enqueue downloads):
 
-- Clone this repository
-- Open a Terminal/Command prompt in the folder where you cloned the repo
-- Run `go build .` (CLI) or `go build ./cmd/crunchy-server` (web panel)
-- If you edit UI `*.templ` files, regenerate the committed Go output from
-  inside `internal/web/` with `templ generate`, then rebuild
+- `GET  /api/health` — `{ "ok": true, "version": "..." }`
+- `POST /api/download` — body `{ kind: "episode"|"season"|"series", id, audio[], subs[], quality, location, format }` → `{ jobId, jobs[] }`
+- `GET  /api/jobs/{id}` — current job state (`status`, `phase`, `progress`, `error`, …)
+
+```sh
+curl -s http://127.0.0.1:8080/api/health
+curl -sX POST http://127.0.0.1:8080/api/download \
+  -H 'Content-Type: application/json' \
+  -d '{"kind":"episode","id":"GE00198973JAJP","audio":["ja-JP"],"subs":["en-US"],"format":"mp4"}'
+```
+
+## Building from source
+
+Requirements: [Go](https://go.dev/dl/), and the [templ CLI](https://github.com/a-h/templ)
+(only if you edit `*.templ` UI files).
+
+```sh
+git clone https://github.com/byescaleira/crunchy.git
+cd crunchy
+go build -o crunchy-server ./cmd/crunchy-server
+go build -o crunchyroll-downloader ./cmd/crunchyroll-downloader
+```
+
+If you edit UI `*.templ` files, regenerate the committed Go output **from inside
+`internal/web/`** (so paths match the committed convention) then rebuild:
+
+```sh
+( cd internal/web && templ generate )
+go build ./cmd/crunchy-server
+```
 
 ## Help
 
 ### How do I get my `etp_rt` cookie?
 
 - Go to https://crunchyroll.com
-- Open Developer Tools
-- Firefox: *Storage* → *Cookies*; Chrome: *Application* → *Cookies*
+- Open Developer Tools → Firefox: *Storage* → *Cookies*; Chrome: *Application* → *Cookies*
 - Select the Crunchyroll domain, then copy the `etp_rt` cookie value
 
-The web panel can also auto-detect `etp_rt` from your local browser cookie store
-(Chromium, Firefox, Safari) — no need to copy it manually.
+The web panel can also auto-detect `etp_rt` from your local browser cookie
+store, so you usually don't need to copy it manually.
 
 ![](.github/screenshots/etp-rt-cookie.png)
 
-### What is a `.wvd` file and do I really need one?
+### What is a `.wvd` file and do I need one?
 
-Yes, Crunchyroll uses DRM-protected content. This file is used to get a
-Widevine license, which gives the keys to decrypt the media.
-
-If you don't have a rooted Android device or are just lazy, search "ready to
-use cdms" and you'll find plenty of websites providing those files.
+Yes. Crunchyroll serves DRM-protected content; the `.wvd` (Widevine device) file
+is used to obtain a Widevine license, which yields the keys to decrypt the
+media. If you don't have a rooted Android device, search "ready to use cdms"
+for sources of these files.
 
 ## Credits
 
-- The downloader core, Crunchyroll API client, and Widevine handling come from
+- Crunchyroll client, Widevine handling, and the download foundation come from
   [CuteTenshii/crunchyroll-downloader](https://github.com/CuteTenshii/crunchyroll-downloader)
-  and its contributors. This fork builds on their work.
-- Web UI, job queue, format-aware mux, structured logging, and the `/api/*`
-  surface are added in this fork.
+  and its contributors.
+- Web control panel, job queue, format-aware muxing, structured logging, and
+  the `/api/*` surface are added in this fork.
 
 ## License
 
-This project is licensed under the MIT License. See [LICENSE.txt](LICENSE.txt)
+MIT — see [LICENSE.txt](LICENSE.txt).
