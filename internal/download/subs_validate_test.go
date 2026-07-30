@@ -70,6 +70,22 @@ func TestAssHasUsableDialogue(t *testing.T) {
 			body: assHeader + "Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,Hello, world\n",
 			want: true,
 		},
+		{
+			// A signs-only line: drawing mode on for the whole line, no dialogue.
+			// mov_text can't render drawings, so this is not renderable and must be
+			// skipped (otherwise it muxes as literal "m 0 0 l ..." garbage text).
+			name: "drawing-only signs line is skipped",
+			body: assHeader + `Dialogue: 0,0:00:01.00,0:00:03.00,Signs,,0,0,0,,{\p1}m 0 0 l 100 0 100 100 0 100{\p0}
+`,
+			want: false,
+		},
+		{
+			// Drawing then real text after \p0: the dialogue part counts.
+			name: "drawing block followed by dialogue keeps the dialogue",
+			body: assHeader + `Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,{\p1}m 0 0 l 50{\p0}A sign label
+`,
+			want: true,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

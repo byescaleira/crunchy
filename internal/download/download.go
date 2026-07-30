@@ -484,30 +484,70 @@ func assHasUsableDialogue(path string) (bool, error) {
 }
 
 // hasASSRenderableText reports whether an ASS Text field has any text mov_text
-// will actually emit as a cue. Override blocks {\...}, line-break markers
-// (\N, \n, \h) and surrounding whitespace are stripped first; whatever remains
-// is renderable. Errs toward true: a borderline event is kept rather than risk
-// skipping a valid subtitle, since mov_text only drops events that have no
-// text at all.
+// will actually emit as a readable cue. Override blocks {\...}, line-break
+// markers (\N, \n, \h) and surrounding whitespace are stripped first; whatever
+// remains is renderable. Errs toward true: a borderline event is kept rather
+// than risk skipping a valid subtitle.
+//
+// The one thing that is NOT renderable is ASS drawing mode: while a \pN
+// override (N != 0) is active, the "text" is vector-geometry commands
+// (m/l/b/s ...), which mov_text cannot draw — it emits them verbatim as
+// literal garbage ("m 0 0 l 100 0 100 100 0 100"). So text produced while
+// drawing mode is on does not count toward renderable, and a signs-only line
+// (\p1 ... \p0 with no dialogue) is skipped rather than muxed as garbage.
 func hasASSRenderableText(text string) bool {
-	// Drop override blocks {\...} — mov_text ignores their contents entirely.
-	// An override runs from '{' to the next '}', so strip those spans directly
-	// (matching on '{' rather than "{\") to also catch drawing/edge forms.
+	var out strings.Builder
+	drawing := false
 	for {
 		i := strings.IndexByte(text, '{')
 		if i < 0 {
+			if !drawing {
+				out.WriteString(text)
+			}
 			break
+		}
+		if !drawing {
+			out.WriteString(text[:i])
 		}
 		j := strings.IndexByte(text[i:], '}')
 		if j < 0 {
-			break
+			break // unbalanced override; drop the rest
 		}
-		text = text[:i] + text[i+j+1:]
+		if on, ok := assDrawingMode(text[i+1 : i+j]); ok {
+			drawing = on
+		}
+		text = text[i+j+1:]
 	}
-	text = strings.ReplaceAll(text, `\N`, "")
-	text = strings.ReplaceAll(text, `\n`, "")
-	text = strings.ReplaceAll(text, `\h`, "")
-	return strings.TrimSpace(text) != ""
+	s := strings.ReplaceAll(out.String(), `\N`, "")
+	s = strings.ReplaceAll(s, `\n`, "")
+	s = strings.ReplaceAll(s, `\h`, "")
+	return strings.TrimSpace(s) != ""
+}
+
+// assDrawingMode scans one override block (the text between '{' and '}') for
+// the last \pN override and reports whether it turns ASS drawing mode on. ok is
+// false when the block carries no \p override, so the caller leaves the drawing
+// flag unchanged. \pbo (blur edges), \pos, etc. are distinct tags and ignored.
+func assDrawingMode(block string) (on bool, ok bool) {
+	i := 0
+	for i < len(block) {
+		if block[i] == '\\' && i+1 < len(block) && block[i+1] == 'p' {
+			k := i + 2
+			if k < len(block) && block[k] >= '0' && block[k] <= '9' {
+				n := 0
+				for k < len(block) && block[k] >= '0' && block[k] <= '9' {
+					n = n*10 + int(block[k]-'0')
+					k++
+				}
+				on = n != 0
+				ok = true
+				i = k
+				continue
+			}
+		}
+		i++
+	}
+	return on, ok
 }
 
 // Episode downloads and muxes a single episode: its subtitles, every requested
