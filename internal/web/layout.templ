@@ -77,7 +77,10 @@ templ Layout(title, active string) {
 templ DownloadModalShell() {
 	<dialog id="download-modal" class="modal">
 		<div class="modal-box bg-base-100 border border-base-300">
-			<div id="download-modal-content"></div>
+			<div
+				id="download-modal-content"
+				hx-on::after-swap="if(this.querySelector('form')){var d=document.getElementById('download-modal');if(d&&!d.open){d.showModal();}}"
+			></div>
 		</div>
 		<form method="dialog" class="modal-backdrop bg-black/60">
 			<button>close</button>

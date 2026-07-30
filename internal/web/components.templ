@@ -29,17 +29,15 @@ templ eyebrowInline(label string) {
 }
 
 // DownloadButton opens the download-options modal for a granularity (episode /
-// season / series) and a content id. It hx-gets the form into #download-modal-content
-// and calls showModal() after the swap (so the HTML is in the DOM before the
-// dialog opens). Using hx-on::after-swap — not click — guarantees the form
-// exists when showModal runs.
+// season / series) and a content id. It hx-gets the form into #download-modal-content;
+// the modal is opened by an after-swap listener on that target in DownloadModalShell
+// (htmx fires htmx:afterSwap on the swap target, not on this button).
 templ DownloadButton(kind, id string) {
 	<button
 		class="btn btn-primary btn-sm rounded-field font-display uppercase tracking-wider"
 		hx-get={ "/downloads/new?kind=" + kind + "&id=" + id }
 		hx-target="#download-modal-content"
 		hx-swap="innerHTML"
-		hx-on::after-swap="document.getElementById('download-modal').showModal()"
 	>
 		{ downloadButtonLabel(kind) }
 	</button>
