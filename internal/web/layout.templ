@@ -221,16 +221,29 @@ templ DownloadModalShell() {
 // navbar is the floating liquid-glass capsule Apple uses for its top tab bar: a
 // centered rounded-full glass pill that floats with a margin from the top/sides
 // (not a full-width bar), a faint full border, and a soft drop shadow. The brand
-// mark + wordmark sit left, the section pills right. Dark-only — no theme toggle.
+// mark + wordmark sit left, the search field fills the middle, and the section
+// pills sit right. The search is a plain GET form to /browse — a single text
+// input submits on Enter with no button, so there is no Search button to tap.
+// Dark-only — no theme toggle.
 templ navbar(active string) {
 	<div class="sticky top-0 z-20 px-4 pt-4">
 		<div class="container mx-auto max-w-6xl">
-			<nav class="atv-capsule flex items-center justify-between gap-3 rounded-full pl-3 pr-2 py-2">
+			<nav class="atv-capsule flex items-center gap-3 rounded-full pl-3 pr-2 py-2">
 				<a class="flex items-center gap-2 px-1.5 shrink-0" href="/browse">
 					@iconReel("h-6 w-6 text-primary shrink-0")
-					<span class="font-semibold tracking-tight text-sm text-white/90 hidden sm:inline">Crunchy Downloader</span>
+					<span class="font-semibold tracking-tight text-sm text-white/90 hidden md:inline">Crunchy Downloader</span>
 				</a>
-				<div class="flex items-center gap-1">
+				<form action="/browse" method="get" class="relative flex-1 min-w-0 max-w-md">
+					@iconSearch("h-4 w-4 text-white/40 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none")
+					<input
+						type="text"
+						name="q"
+						class="input input-bordered rounded-full w-full h-9 pl-10 pr-3 bg-base-200/60 border-white/10 text-sm"
+						placeholder="Search by title or paste a series URL"
+						autocomplete="off"
+					/>
+				</form>
+				<div class="flex items-center gap-1 shrink-0">
 					@navLink("Settings", "/settings", active == "settings")
 					@navLink("Browse", "/browse", active == "browse")
 					@navLink("Jobs", "/jobs", active == "jobs")

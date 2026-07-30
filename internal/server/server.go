@@ -35,6 +35,7 @@ type crunchyAPI interface {
 	GetEpisodeInfo(id string) (media.EpisodeInfo, error)
 	GetSeries(id string) (media.Series, error)
 	BrowsePopular(n, start int) ([]media.BrowsePanel, error)
+	BrowseByCategory(category string, n, start int) ([]media.BrowsePanel, error)
 	SearchSeries(q string, n int) ([]media.SearchHit, error)
 }
 
@@ -441,7 +442,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings", s.handleSettingsPost)
 	mux.HandleFunc("POST /settings/downloads", s.handleSettingsDownloadsPost)
 	mux.HandleFunc("GET /browse", s.handleBrowse)
-	mux.HandleFunc("POST /browse", s.handleBrowsePost)
+	mux.HandleFunc("GET /series/{id}", s.handleSeriesDetail)
 	mux.HandleFunc("GET /season/{id}/episodes", s.handleSeasonEpisodes)
 	mux.HandleFunc("GET /downloads/new", s.handleDownloadNew)
 	mux.HandleFunc("POST /downloads", s.handleDownloadPost)

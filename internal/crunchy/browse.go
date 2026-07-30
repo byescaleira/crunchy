@@ -41,6 +41,38 @@ func (c *Client) BrowsePopular(n, start int) ([]media.BrowsePanel, error) {
 	return br.Data, nil
 }
 
+// BrowseByCategory fetches series for a single genre from the discover/browse
+// endpoint. category is a v2 genre slug (e.g. "action", "drama", "shonen",
+// "slice-of-life"); the endpoint accepts a comma-separated `categories` list, but
+// we send one at a time so the rail pills map 1:1 to a result set. Like
+// BrowsePopular this is best-effort: a decode miss returns an error and the
+// caller shows a friendly message. n caps the page size; start is the offset.
+func (c *Client) BrowseByCategory(category string, n, start int) ([]media.BrowsePanel, error) {
+	u := fmt.Sprintf(
+		"https://www.crunchyroll.com/content/v2/discover/browse?n=%d&start=%d&sort_by=popularity&categories=%s&preferred_audio_language=ja-JP&locale=en-US",
+		n, start, url.PathEscape(category),
+	)
+	req, err := c.CrunchyRequest(http.MethodGet, u, nil, true)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var br media.BrowseResponse
+	if err := json.Unmarshal(body, &br); err != nil {
+		return nil, err
+	}
+	return br.Data, nil
+}
+
 // SearchSeries searches series by title via the discover/search endpoint. The
 // response shape is community-documented and varies: Data may be a list of
 // typed groups (each with a Type and Items) or a flat list of hits. decodeSearch

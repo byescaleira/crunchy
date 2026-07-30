@@ -234,3 +234,41 @@ type SearchGroup struct {
 	Count int         `json:"count"`
 	Items []SearchHit `json:"items"`
 }
+
+// Genre is one curated browse filter pill: Slug is the v2 discover/browse
+// `categories` value; Label is what the pill shows. The slugs come from the
+// community-documented v2 discover/categories enum (action, adventure, comedy,
+// drama, fantasy, music, romance, sci-fi, seinen, shojo, shonen, slice-of-life,
+// sports, supernatural, thriller). We hardcode the curated set rather than
+// hitting /discover/categories so the rail is stable and shape-agnostic.
+type Genre struct {
+	Slug  string
+	Label string
+}
+
+// BrowseGenres is the curated genre rail order shown above the popular grid on
+// the Browse page. Order is roughly popularity/variety, not alphabetical.
+var BrowseGenres = []Genre{
+	{"action", "Action"},
+	{"adventure", "Adventure"},
+	{"comedy", "Comedy"},
+	{"drama", "Drama"},
+	{"fantasy", "Fantasy"},
+	{"romance", "Romance"},
+	{"sci-fi", "Sci-Fi"},
+	{"shonen", "Shonen"},
+	{"slice-of-life", "Slice of Life"},
+	{"sports", "Sports"},
+	{"supernatural", "Supernatural"},
+	{"thriller", "Thriller"},
+}
+
+// GenreLabel returns the display label for a genre slug, or "" if unknown.
+func GenreLabel(slug string) string {
+	for _, g := range BrowseGenres {
+		if g.Slug == slug {
+			return g.Label
+		}
+	}
+	return ""
+}

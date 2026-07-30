@@ -78,101 +78,103 @@ templ SettingsPage(saved bool, errText string, maxConcurrent int) {
 	}
 }
 
-// BrowsePage renders the browse panel: one unified search box (paste a series
-// URL or type a title — the app tells them apart), a #seasons target that the
-// popular grid fills on load and that search/URL results swap into via HTMX, an
-// #episodes target for the episode grid, and a #download-queue list that
-// self-loads and refreshes when a download is submitted.
-templ BrowsePage(popular []media.BrowsePanel, errText string) {
+// BrowsePage renders the discovery surface: a curated genre rail and a grid of
+// series cards. The search box lives in the capsule navbar (not in the body), so
+// this page carries no search form — it just renders whatever the query
+// resolved to (popular / a genre / search results). Series cards link to
+// /series/{id}; the download queue lives on the Jobs page, not here.
+templ BrowsePage(view BrowseView) {
 	@Layout("Browse", "browse") {
 		<div class="flex flex-col gap-5">
 			@eyebrow("Browse")
-			<form hx-post="/browse" hx-target="#seasons" hx-swap="innerHTML" class="relative">
-				@iconSearch("h-4 w-4 text-white/40 absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none")
-				<input
-					type="text"
-					name="q"
-					class="input input-bordered rounded-full w-full pl-11 pr-28 bg-base-100 border-white/10"
-					placeholder="Paste a series URL or search by title"
-				/>
-				<button class="btn btn-primary rounded-full gap-1.5 absolute right-1.5 top-1/2 -translate-y-1/2">
-					<span>Search</span>
-				</button>
-			</form>
+			@categoryRail(view.ActiveCat)
+			if view.ErrText != "" {
+				@Alert("error", view.ErrText)
+			}
+			if view.Mode == BrowseSearch {
+				@eyebrowInline("Search results")
+				if len(view.Hits) == 0 && view.ErrText == "" {
+					<p class="text-sm text-white/40 font-mono mt-3">{ fmt.Sprintf("No results for %q.", view.Query) }</p>
+				}
+				if len(view.Hits) > 0 {
+					<div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-4 md:gap-5 mt-4">
+						for _, h := range view.Hits {
+							@seriesResultCard(h.ID, h.Title, h.SlugTitle, h.Images, 0)
+						}
+					</div>
+				}
+			}
+			if view.Mode == BrowseCategory {
+				@eyebrowInline(media.GenreLabel(view.ActiveCat))
+				if len(view.Panels) == 0 && view.ErrText == "" {
+					<p class="text-sm text-white/40 font-mono mt-3">No series in this category right now.</p>
+				}
+				if len(view.Panels) > 0 {
+					<div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-4 md:gap-5 mt-4">
+						for _, p := range view.Panels {
+							@seriesResultCard(p.ID, p.Title, p.SlugTitle, p.Images, p.SeriesLaunchYear)
+						}
+					</div>
+				}
+			}
+			if view.Mode == BrowsePopular {
+				@eyebrowInline("Popular now")
+				if len(view.Panels) == 0 && view.ErrText == "" {
+					<p class="text-sm text-white/40 font-mono mt-3">No popular anime available right now.</p>
+				}
+				if len(view.Panels) > 0 {
+					<div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-4 md:gap-5 mt-4">
+						for _, p := range view.Panels {
+							@seriesResultCard(p.ID, p.Title, p.SlugTitle, p.Images, p.SeriesLaunchYear)
+						}
+					</div>
+				}
+			}
+		</div>
+	}
+}
 
-			<div id="seasons" class="flex flex-col gap-2">
-				@PopularGrid(popular, errText)
-			</div>
-
+// SeriesDetailPage is the full series screen reached by clicking a browse card
+// (or pasting a series URL into the navbar search): the cinematic hero with key
+// art + title + meta + Download-series, the seasons list with per-season View /
+// Download buttons, and an #episodes target a season's View fills via HTMX.
+// The download queue is not shown here — it lives on the Jobs page.
+templ SeriesDetailPage(series media.Series, seriesID string, seasons []media.Season, errText string) {
+	@Layout(seriesTitleOrBrowse(series), "browse") {
+		<div class="flex flex-col gap-5">
+			<a class="inline-flex items-center gap-1.5 text-sm text-white/55 hover:text-white transition-colors" href="/browse">
+				@iconPlay("h-3.5 w-3.5 rotate-180 text-white/55")
+				<span>Browse</span>
+			</a>
+			@seriesHero(series, seriesID)
+			@SeasonsList(seasons, seriesID, errText)
 			<div>
 				@eyebrow("Episodes")
 				<div id="episodes" class="mt-3">
 					@emptyState("Select a season to list its episodes.")
 				</div>
 			</div>
-
-			<div>
-				@eyebrow("Now downloading")
-				<div
-					id="download-queue"
-					class="mt-3"
-					hx-get="/jobs/list"
-					hx-trigger="load, refresh"
-					hx-target="this"
-					hx-swap="innerHTML"
-				>
-					@emptyState("No jobs yet — start a download from an episode.")
-				</div>
-			</div>
 		</div>
 	}
 }
 
-// PopularGrid renders the most-popular-anime grid swapped into #seasons on load
-// and on an empty search. Empty + no error shows a quiet hint.
-templ PopularGrid(panels []media.BrowsePanel, errText string) {
-	if errText != "" {
-		@Alert("error", errText)
+// seriesTitleOrBrowse returns the series title for the page <title>, falling
+// back to "Browse" when the series fetch failed (no title captured).
+func seriesTitleOrBrowse(series media.Series) string {
+	if series.Title != "" {
+		return series.Title
 	}
-	if len(panels) == 0 && errText == "" {
-		<p class="text-sm text-white/40 font-mono">No popular anime available right now.</p>
-	}
-	if len(panels) > 0 {
-		@eyebrowInline("Popular now")
-		<div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-3 mt-3">
-			for _, p := range panels {
-				@seriesResultCard(p.ID, p.Title, p.SlugTitle, p.Images, p.SeriesLaunchYear)
-			}
-		</div>
-	}
-}
-
-// SearchResults renders a title-search result grid swapped into #seasons.
-templ SearchResults(hits []media.SearchHit, errText string) {
-	if errText != "" {
-		@Alert("error", errText)
-	}
-	if len(hits) == 0 && errText == "" {
-		<p class="text-sm text-white/40 font-mono">No results.</p>
-	}
-	if len(hits) > 0 {
-		@eyebrowInline("Search results")
-		<div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-3 mt-3">
-			for _, h := range hits {
-				@seriesResultCard(h.ID, h.Title, h.SlugTitle, h.Images, 0)
-			}
-		</div>
-	}
+	return "Browse"
 }
 
 // seriesResultCard renders one series as an Apple TV browse card: a portrait
 // poster (2:3) that fills the card, with the title + year overlaid at the bottom
 // over a scrim, and a translucent play glyph that fades in on hover. The whole
-// card is the tap target (hx-post to /browse with the reconstructed series URL
-// as `q`), so there is no separate button — this is the media-forward browse
-// pattern, not a thumbnail-plus-button row. The poster (PosterTall, falling
+// card is a link to the series detail page (/series/{id}) — clicking navigates to
+// the detail screen rather than drilling in inline, so Browse stays a pure
+// discovery surface (popular + categories). The poster (PosterTall, falling
 // back to PosterWide) keeps the card compact in the grid (not a full-screen
-// poster). hx-vals carries the URL so the existing drill-down path is reused.
+// poster).
 templ seriesResultCard(id, title, slug string, img media.Images, year int) {
 	{{
 		var src string
@@ -182,13 +184,9 @@ templ seriesResultCard(id, title, slug string, img media.Images, year int) {
 			src = im.Source
 		}
 	}}
-	<button
-		type="button"
+	<a
 		class="group atv-card atv-lift relative block w-full aspect-[2/3] rounded-box overflow-hidden text-left"
-		hx-post="/browse"
-		hx-target="#seasons"
-		hx-swap="innerHTML"
-		hx-vals={ fmt.Sprintf("{\"q\":%q}", "https://www.crunchyroll.com/series/"+id+"/"+slug) }
+		href={ "/series/" + id }
 		title={ title }
 	>
 		if src != "" {
@@ -215,18 +213,51 @@ templ seriesResultCard(id, title, slug string, img media.Images, year int) {
 				<span class="text-[11px] font-mono text-white/70 drop-shadow">{ year }</span>
 			}
 		</div>
-	</button>
+	</a>
 }
 
-// BrowseSeriesResult is the HTMX partial swapped into #seasons after a /browse
-// POST: the cinematic series hero (key art + title + meta + Download-series),
-// followed by the seasons list with its Download-season buttons.
-templ BrowseSeriesResult(series media.Series, seriesID string, seasons []media.Season, errText string) {
-	if errText != "" {
-		@Alert("error", errText)
+// BrowseMode is which grid the Browse page is showing.
+type BrowseMode int
+
+const (
+	BrowsePopular  BrowseMode = iota // the popular grid (no query)
+	BrowseCategory                  // a genre filter (?cat=<slug>)
+	BrowseSearch                     // title-search results (?q=<title>)
+)
+
+// BrowseView is the view-model for the Browse page. Mode selects which grid to
+// render; Panels feeds the popular/category grids, Hits feeds the search grid,
+// ActiveCat highlights a genre pill, Query is the search term (for the empty
+// message), and ErrText surfaces a transport/config error (never the token).
+type BrowseView struct {
+	Mode      BrowseMode
+	Panels    []media.BrowsePanel
+	Hits      []media.SearchHit
+	ActiveCat string
+	Query     string
+	ErrText   string
+}
+
+// categoryRail is the curated genre filter row above the grid: an "All" pill
+// plus one pill per media.BrowseGenres entry. Selecting a genre navigates to
+// /browse?cat=<slug> (a GET, so it's a plain shareable link). The active pill
+// gets a solid primary fill; the rest are quiet off-white.
+templ categoryRail(activeCat string) {
+	<div class="flex flex-wrap items-center gap-2">
+		@categoryPill("All", "/browse", activeCat == "")
+		for _, g := range media.BrowseGenres {
+			@categoryPill(g.Label, "/browse?cat="+g.Slug, activeCat == g.Slug)
+		}
+	</div>
+}
+
+// categoryPill is one pill in the genre rail. active gets a solid primary fill.
+templ categoryPill(label, href string, active bool) {
+	if active {
+		<a class="px-3.5 py-1.5 text-sm font-medium text-primary-content bg-primary rounded-full shadow-lg shadow-primary/30" href={ href }>{ label }</a>
+	} else {
+		<a class="px-3.5 py-1.5 text-sm font-medium text-white/55 hover:text-white rounded-full bg-white/5 hover:bg-white/10 border border-white/10 transition-colors" href={ href }>{ label }</a>
 	}
-	@seriesHero(series, seriesID)
-	@SeasonsList(seasons, seriesID, "")
 }
 
 // SeasonsList renders the seasons header and the season rows. seriesID is

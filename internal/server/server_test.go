@@ -33,6 +33,7 @@ type fakeAPI struct {
 	episodeReqID string
 	seriesReqID  string
 	searchReq    string
+	catReq       string
 }
 
 func (f *fakeAPI) GetSeasons(contentId, audioLocale, subLocale string) ([]media.Season, error) {
@@ -51,6 +52,10 @@ func (f *fakeAPI) GetSeries(id string) (media.Series, error) {
 	return f.series, f.seriesErr
 }
 func (f *fakeAPI) BrowsePopular(n, start int) ([]media.BrowsePanel, error) {
+	return f.panels, f.panelsErr
+}
+func (f *fakeAPI) BrowseByCategory(category string, n, start int) ([]media.BrowsePanel, error) {
+	f.catReq = category
 	return f.panels, f.panelsErr
 }
 func (f *fakeAPI) SearchSeries(q string, n int) ([]media.SearchHit, error) {
@@ -117,43 +122,42 @@ func TestSettingsPost_EmptyToken(t *testing.T) {
 	}
 }
 
-func TestBrowsePost_NotConfigured(t *testing.T) {
+func TestBrowse_NotConfigured(t *testing.T) {
 	s := newTestServer(t)
 	h := s.Handler()
-	r, w := postForm("/browse", "q=https://www.crunchyroll.com/series/ABCDEFGHI")
+	r, w := get("/browse?q=https://www.crunchyroll.com/series/ABCDEFGHI")
 	got := body(t, h, r, w)
 	if !strings.Contains(got, "etp_rt") {
 		t.Errorf("expected a 'save token first' message, got: %s", got)
 	}
 }
 
-func TestBrowsePost_Seasons(t *testing.T) {
+// TestBrowse_SeriesURLRedirects confirms a pasted series URL in the navbar
+// search navigates to the detail page (a 303 redirect) rather than rendering
+// inline on Browse.
+func TestBrowse_SeriesURLRedirects(t *testing.T) {
 	s := newTestServer(t)
 	s.api = &fakeAPI{
-		seasons: []media.Season{
-			{ID: "s1", SeasonNumber: 1},
-			{ID: "s2", SeasonNumber: 2},
-		},
+		seasons: []media.Season{{ID: "s1", SeasonNumber: 1}},
 	}
 	h := s.Handler()
-	r, w := postForm("/browse", "q=https://www.crunchyroll.com/series/ABCDEFGHI")
-	got := body(t, h, r, w)
-	if !strings.Contains(got, "Season 1") || !strings.Contains(got, "Season 2") {
-		t.Errorf("expected both season cards, got: %s", got)
+	r, w := get("/browse?q=https://www.crunchyroll.com/series/ABCDEFGHI")
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 redirect to the detail page, got %d", w.Code)
 	}
-	if !strings.Contains(got, "/season/s1/episodes") {
-		t.Error("season card missing episodes link")
+	if loc := w.Header().Get("Location"); loc != "/series/ABCDEFGHI" {
+		t.Errorf("redirect Location = %q, want /series/ABCDEFGHI", loc)
 	}
 }
 
-func TestBrowsePost_BadURL(t *testing.T) {
+func TestBrowse_BadQuery(t *testing.T) {
 	s := newTestServer(t)
 	s.api = &fakeAPI{}
 	h := s.Handler()
 	// A non-URL, non-empty query falls through to a title search; with no
-	// results the page shows a friendly "No results" message (not an "Invalid
-	// URL" error — the unified box accepts titles).
-	r, w := postForm("/browse", "q=not-a-url")
+	// results the page shows a friendly "No results" message.
+	r, w := get("/browse?q=not-a-url")
 	got := body(t, h, r, w)
 	if !strings.Contains(got, "No results") {
 		t.Errorf("expected a 'No results' message, got: %s", got)
@@ -173,13 +177,13 @@ func TestBrowse_GetPopular(t *testing.T) {
 	if !strings.Contains(got, "Frieren") {
 		t.Errorf("popular grid missing the panel title; got: %s", got)
 	}
-	// The card is a media-forward tap target (no separate button) that posts the
-	// reconstructed series URL as q. The URL is carried in hx-vals.
-	if !strings.Contains(got, "series/PANELID001/frieren") {
-		t.Errorf("popular card missing the reconstructed series URL; got: %s", got)
+	// The card is now a link to the detail page (/series/{id}), not an hx-post
+	// tap target back into Browse.
+	if !strings.Contains(got, `href="/series/PANELID001"`) {
+		t.Errorf("popular card should link to the detail page; got: %s", got)
 	}
-	if !strings.Contains(got, `hx-post="/browse"`) {
-		t.Errorf("popular card should be an hx-post tap target; got: %s", got)
+	if strings.Contains(got, `hx-post="/browse"`) {
+		t.Errorf("popular card must not post back into Browse; got: %s", got)
 	}
 }
 
@@ -193,7 +197,26 @@ func TestBrowse_GetPopular_NotConfigured(t *testing.T) {
 	}
 }
 
-func TestBrowsePost_TitleSearch(t *testing.T) {
+func TestBrowse_Category(t *testing.T) {
+	s := newTestServer(t)
+	s.api = &fakeAPI{
+		panels: []media.BrowsePanel{{ID: "CATID0001", Title: "Action Show", SlugTitle: "action-show"}},
+	}
+	h := s.Handler()
+	r, w := get("/browse?cat=action")
+	got := body(t, h, r, w)
+	if !strings.Contains(got, "Action Show") {
+		t.Errorf("category grid missing the panel title; got: %s", got)
+	}
+	if !strings.Contains(got, "Action") { // the section eyebrow uses the genre label
+		t.Errorf("category eyebrow missing the genre label; got: %s", got)
+	}
+	if s.api.(*fakeAPI).catReq != "action" {
+		t.Errorf("BrowseByCategory got %q, want action", s.api.(*fakeAPI).catReq)
+	}
+}
+
+func TestBrowse_TitleSearch(t *testing.T) {
 	s := newTestServer(t)
 	s.api = &fakeAPI{
 		hits: []media.SearchHit{
@@ -201,7 +224,7 @@ func TestBrowsePost_TitleSearch(t *testing.T) {
 		},
 	}
 	h := s.Handler()
-	r, w := postForm("/browse", "q=Frieren")
+	r, w := get("/browse?q=Frieren")
 	got := body(t, h, r, w)
 	if !strings.Contains(got, "Frieren") {
 		t.Errorf("search results missing the hit title; got: %s", got)
@@ -214,16 +237,53 @@ func TestBrowsePost_TitleSearch(t *testing.T) {
 	}
 }
 
-func TestBrowsePost_EmptyQuery(t *testing.T) {
+func TestBrowse_EmptyQuery(t *testing.T) {
 	s := newTestServer(t)
 	s.api = &fakeAPI{
 		panels: []media.BrowsePanel{{ID: "PANELID002", Title: "Solo Leveling", SlugTitle: "solo-leveling"}},
 	}
 	h := s.Handler()
-	r, w := postForm("/browse", "q=")
+	r, w := get("/browse?q=")
 	got := body(t, h, r, w)
 	if !strings.Contains(got, "Solo Leveling") || !strings.Contains(got, "Popular now") {
 		t.Errorf("empty query should re-show the popular grid; got: %s", got)
+	}
+}
+
+// TestSeriesDetail renders the full detail page (hero + seasons + #episodes)
+// for a /series/{id} GET.
+func TestSeriesDetail(t *testing.T) {
+	s := newTestServer(t)
+	s.api = &fakeAPI{
+		seasons: []media.Season{
+			{ID: "s1", SeasonNumber: 1},
+			{ID: "s2", SeasonNumber: 2},
+		},
+	}
+	h := s.Handler()
+	r, w := get("/series/ABCDEFGHI")
+	got := body(t, h, r, w)
+	if !strings.Contains(got, "Season 1") || !strings.Contains(got, "Season 2") {
+		t.Errorf("expected both season cards, got: %s", got)
+	}
+	if !strings.Contains(got, "/season/s1/episodes") {
+		t.Error("season card missing episodes link")
+	}
+	if !strings.Contains(got, `id="episodes"`) {
+		t.Error("detail page missing the #episodes target")
+	}
+	if s.api.(*fakeAPI).seasonReq != "ABCDEFGHI" {
+		t.Errorf("GetSeasons got %q, want ABCDEFGHI", s.api.(*fakeAPI).seasonReq)
+	}
+}
+
+func TestSeriesDetail_NotConfigured(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler()
+	r, w := get("/series/ABCDEFGHI")
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/browse" {
+		t.Errorf("unconfigured detail should redirect to /browse; got %d %q", w.Code, w.Header().Get("Location"))
 	}
 }
 
