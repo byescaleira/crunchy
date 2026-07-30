@@ -113,9 +113,10 @@ func DownloadModalShell() templ.Component {
 	})
 }
 
-// navbar is the glass top bar: a clean film-reel brand mark with the wordmark,
-// the section links, and nothing else (dark-only — no theme toggle). Translucent
-// backdrop blur keeps the page scrolling under it feel native.
+// navbar is the floating liquid-glass capsule Apple uses for its top tab bar: a
+// centered rounded-full glass pill that floats with a margin from the top/sides
+// (not a full-width bar), a faint full border, and a soft drop shadow. The brand
+// mark + wordmark sit left, the section pills right. Dark-only — no theme toggle.
 func navbar(active string) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
@@ -137,15 +138,15 @@ func navbar(active string) templ.Component {
 			templ_7745c5c3_Var4 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "<div class=\"sticky top-0 z-20 atv-glass\"><div class=\"container mx-auto max-w-6xl px-4\"><div class=\"navbar min-h-16 gap-2\"><div class=\"navbar-start gap-2 items-center\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "<div class=\"sticky top-0 z-20 px-4 pt-4\"><div class=\"container mx-auto max-w-6xl\"><nav class=\"atv-capsule flex items-center justify-between gap-3 rounded-full pl-3 pr-2 py-2\"><a class=\"flex items-center gap-2 px-1.5 shrink-0\" href=\"/browse\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = iconReel("h-7 w-7 text-primary shrink-0").Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = iconReel("h-6 w-6 text-primary shrink-0").Render(ctx, templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "<span class=\"font-semibold tracking-tight text-base leading-none\">Crunchy Downloader</span></div><div class=\"navbar-center gap-1\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "<span class=\"font-semibold tracking-tight text-sm text-white/90 hidden sm:inline\">Crunchy Downloader</span></a><div class=\"flex items-center gap-1\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -161,7 +162,7 @@ func navbar(active string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "</div><div class=\"navbar-end\"></div></div></div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "</div></nav></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -169,8 +170,8 @@ func navbar(active string) templ.Component {
 	})
 }
 
-// navLink is a section link in the glass top bar. The active link gets a primary
-// pill; inactive links are quiet off-white.
+// navLink is a section pill inside the capsule. The active link gets a solid
+// primary fill; inactive links are quiet off-white that brighten on hover.
 func navLink(label, href string, active bool) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
@@ -193,14 +194,14 @@ func navLink(label, href string, active bool) templ.Component {
 		}
 		ctx = templ.ClearChildren(ctx)
 		if active {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "<a class=\"px-3.5 py-1.5 text-sm font-medium text-primary-content bg-primary rounded-full\" href=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "<a class=\"px-4 py-1.5 text-sm font-medium text-primary-content bg-primary rounded-full shadow-lg shadow-primary/30\" href=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var6 templ.SafeURL
 			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinURLErrs(href)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `layout.templ`, Line: 235, Col: 103}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `layout.templ`, Line: 235, Col: 129}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 			if templ_7745c5c3_Err != nil {
@@ -213,7 +214,7 @@ func navLink(label, href string, active bool) templ.Component {
 			var templ_7745c5c3_Var7 string
 			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(label)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `layout.templ`, Line: 235, Col: 113}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `layout.templ`, Line: 235, Col: 139}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 			if templ_7745c5c3_Err != nil {
@@ -224,14 +225,14 @@ func navLink(label, href string, active bool) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "<a class=\"px-3.5 py-1.5 text-sm font-medium text-white/60 hover:text-white rounded-full hover:bg-white/5\" href=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "<a class=\"px-4 py-1.5 text-sm font-medium text-white/55 hover:text-white rounded-full hover:bg-white/10 transition-colors\" href=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var8 templ.SafeURL
 			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinURLErrs(href)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `layout.templ`, Line: 237, Col: 119}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `layout.templ`, Line: 237, Col: 136}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 			if templ_7745c5c3_Err != nil {
@@ -244,7 +245,7 @@ func navLink(label, href string, active bool) templ.Component {
 			var templ_7745c5c3_Var9 string
 			templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(label)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `layout.templ`, Line: 237, Col: 129}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `layout.templ`, Line: 237, Col: 146}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 			if templ_7745c5c3_Err != nil {

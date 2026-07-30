@@ -139,7 +139,7 @@ templ PopularGrid(panels []media.BrowsePanel, errText string) {
 	}
 	if len(panels) > 0 {
 		@eyebrowInline("Popular now")
-		<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 mt-3">
+		<div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-3 mt-3">
 			for _, p := range panels {
 				@seriesResultCard(p.ID, p.Title, p.SlugTitle, p.Images, p.SeriesLaunchYear)
 			}
@@ -157,7 +157,7 @@ templ SearchResults(hits []media.SearchHit, errText string) {
 	}
 	if len(hits) > 0 {
 		@eyebrowInline("Search results")
-		<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 mt-3">
+		<div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-3 mt-3">
 			for _, h := range hits {
 				@seriesResultCard(h.ID, h.Title, h.SlugTitle, h.Images, 0)
 			}
@@ -165,52 +165,57 @@ templ SearchResults(hits []media.SearchHit, errText string) {
 	}
 }
 
-// seriesResultCard renders one series as a media-forward Apple TV card: a
-// landscape key-art banner (poster_wide, falling back to the portrait poster),
-// the title, a launch-year badge, and a "List seasons" button. The button posts
-// the reconstructed /series/<id>/<slug> URL as the unified `q` field, so it
-// reuses the existing URL drill-down (seasons list + series hero) without a
-// separate code path. Landscape art keeps the banner short so the grid reads as
-// cards, not full-screen posters.
+// seriesResultCard renders one series as an Apple TV browse card: a portrait
+// poster (2:3) that fills the card, with the title + year overlaid at the bottom
+// over a scrim, and a translucent play glyph that fades in on hover. The whole
+// card is the tap target (hx-post to /browse with the reconstructed series URL
+// as `q`), so there is no separate button — this is the media-forward browse
+// pattern, not a thumbnail-plus-button row. The poster (PosterTall, falling
+// back to PosterWide) keeps the card compact in the grid (not a full-screen
+// poster). hx-vals carries the URL so the existing drill-down path is reused.
 templ seriesResultCard(id, title, slug string, img media.Images, year int) {
 	{{
 		var src string
-		if im, ok := media.BestImage(img.PosterWide); ok && im.Source != "" {
+		if im, ok := media.BestImage(img.PosterTall); ok && im.Source != "" {
 			src = im.Source
-		} else if im, ok := media.BestImage(img.PosterTall); ok && im.Source != "" {
+		} else if im, ok := media.BestImage(img.PosterWide); ok && im.Source != "" {
 			src = im.Source
 		}
 	}}
-	<div class="atv-card atv-lift rounded-box overflow-hidden">
-		<div class="aspect-video bg-base-300/50 overflow-hidden">
-			if src != "" {
-				<img src={ src } alt={ title } class="w-full h-full object-cover" loading="lazy"/>
-			} else {
-				<div class="w-full h-full flex items-center justify-center">
-					<span class="font-mono text-xs text-white/25">no art</span>
-				</div>
+	<button
+		type="button"
+		class="group atv-card atv-lift relative block w-full aspect-[2/3] rounded-box overflow-hidden text-left"
+		hx-post="/browse"
+		hx-target="#seasons"
+		hx-swap="innerHTML"
+		hx-vals={ fmt.Sprintf("{\"q\":%q}", "https://www.crunchyroll.com/series/"+id+"/"+slug) }
+		title={ title }
+	>
+		if src != "" {
+			<img
+				src={ src }
+				alt={ title }
+				class="absolute inset-0 w-full h-full object-cover transition-transform duration-300 ease-out group-hover:scale-105"
+				loading="lazy"
+			/>
+		} else {
+			<div class="absolute inset-0 bg-base-300 flex items-center justify-center">
+				<span class="font-mono text-xs text-white/25">no art</span>
+			</div>
+		}
+		<div class="absolute inset-0 atv-hero-scrim opacity-90 pointer-events-none"></div>
+		<div class="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none">
+			<span class="flex items-center justify-center h-12 w-12 rounded-full bg-white/15 border border-white/25 backdrop-blur-md shadow-lg">
+				@iconPlay("h-5 w-5 text-white translate-x-0.5")
+			</span>
+		</div>
+		<div class="absolute bottom-0 inset-x-0 p-3 flex flex-col gap-0.5 pointer-events-none">
+			<h3 class="font-display text-sm font-semibold leading-tight line-clamp-2 text-white drop-shadow-md">{ title }</h3>
+			if year != 0 {
+				<span class="text-[11px] font-mono text-white/70 drop-shadow">{ year }</span>
 			}
 		</div>
-		<div class="p-3 flex flex-col gap-1.5">
-			<h3 class="font-display text-sm leading-tight line-clamp-2 text-white/90" title={ title }>{ title }</h3>
-			<div class="flex flex-wrap items-center gap-1">
-				if year != 0 {
-					<span class="px-1.5 py-0.5 rounded-full text-[10px] font-mono text-white/55 bg-white/5 border border-white/10">{ year }</span>
-				}
-			</div>
-			<div class="mt-1">
-				<button
-					class="btn btn-primary btn-sm rounded-full w-full"
-					hx-post="/browse"
-					hx-target="#seasons"
-					hx-swap="innerHTML"
-					hx-vals={ fmt.Sprintf("{\"q\":%q}", "https://www.crunchyroll.com/series/"+id+"/"+slug) }
-				>
-					List seasons
-				</button>
-			</div>
-		</div>
-	</div>
+	</button>
 }
 
 // BrowseSeriesResult is the HTMX partial swapped into #seasons after a /browse

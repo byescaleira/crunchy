@@ -173,12 +173,13 @@ func TestBrowse_GetPopular(t *testing.T) {
 	if !strings.Contains(got, "Frieren") {
 		t.Errorf("popular grid missing the panel title; got: %s", got)
 	}
-	// The card's "List seasons" button posts the reconstructed series URL as q.
-	if !strings.Contains(got, "List seasons") {
-		t.Errorf("popular card missing the List seasons button; got: %s", got)
-	}
+	// The card is a media-forward tap target (no separate button) that posts the
+	// reconstructed series URL as q. The URL is carried in hx-vals.
 	if !strings.Contains(got, "series/PANELID001/frieren") {
 		t.Errorf("popular card missing the reconstructed series URL; got: %s", got)
+	}
+	if !strings.Contains(got, `hx-post="/browse"`) {
+		t.Errorf("popular card should be an hx-post tap target; got: %s", got)
 	}
 }
 

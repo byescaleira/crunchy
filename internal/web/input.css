@@ -133,6 +133,17 @@
     border-bottom: 1px solid var(--atv-border);
   }
 
+  /* atv-capsule is the floating liquid-glass pill Apple uses for the top tab bar:
+     translucent backdrop blur on all sides, a faint full border, and a soft
+     drop shadow so it reads as floating glass, not a full-width bar. */
+  .atv-capsule {
+    background-color: var(--atv-glass);
+    backdrop-filter: saturate(180%) blur(24px);
+    -webkit-backdrop-filter: saturate(180%) blur(24px);
+    border: 1px solid var(--atv-border);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(255, 255, 255, 0.06) inset;
+  }
+
   /* Slim progress track: a 4px rounded rail with a primary fill. Works for the
      native <progress> element (the page script sets .value). */
   .atv-bar {
