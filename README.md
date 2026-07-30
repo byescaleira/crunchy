@@ -2,12 +2,10 @@
 
 A Crunchyroll downloader with a built-in web control panel. Download anime as
 `.mkv` or `.mp4` with multiple audio and subtitle languages, rich metadata, cover
-art, and live progress — all from a browser UI. One command, one binary, no Go
-toolchain required.
+art, and live progress — all from a browser UI. One command, one binary you build
+yourself.
 
-Single prebuilt Go binary, no runtime dependencies besides FFmpeg (which the
-installer sets up for you). The web UI is embedded in the binary; nothing is
-served from disk.
+The web UI is embedded in the binary; nothing is served from disk.
 
 ![Crunchy Downloader web panel](.github/screenshots/web-panel.png)
 
@@ -17,49 +15,33 @@ served from disk.
 > the upstream authors. The web control panel, job queue, MP4 muxing,
 > structured logging, and `/api/*` surface were added in this fork.
 
-## Install
+## Build
 
-One line. It downloads the matching prebuilt binary, installs it on your `PATH`,
-auto-installs FFmpeg if a package manager is available, and tells you where to put
-your Widevine `.wvd`.
-
-**macOS / Linux** — copy into a terminal:
+You need [Go](https://go.dev/dl/) (1.25+) and [FFmpeg](https://www.ffmpeg.org/download.html#get-packages)
+on your `PATH`. Then:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/byescaleira/crunchy/master/install.sh | bash
+git clone https://github.com/byescaleira/crunchy.git
+cd crunchy
+go build -o crunchy ./cmd/crunchy
 ```
 
-**Windows** (PowerShell):
-
-```powershell
-irm https://raw.githubusercontent.com/byescaleira/crunchy/master/install.ps1 | iex
-```
-
-Then open a **new** terminal (so the `PATH` refreshes on Windows) and run:
+If you edit UI `*.templ` files, regenerate the committed Go output **from inside
+`internal/web/`** (so paths match the committed convention) then rebuild:
 
 ```sh
-crunchy
+( cd internal/web && templ generate )
+go build -o crunchy ./cmd/crunchy
 ```
 
-The control panel opens in your browser.
-
-Prefer a manual download? Grab the matching binary from the
-[latest release](https://github.com/byescaleira/crunchy/releases/latest), put it
-on your `PATH`, and ensure FFmpeg is installed:
-
-| OS      | Arch  | Binary                          |
-|---------|-------|---------------------------------|
-| macOS   | arm64 | `crunchy-darwin-arm64`          |
-| macOS   | amd64 | `crunchy-darwin-amd64`          |
-| Linux   | amd64 | `crunchy-linux-amd64`           |
-| Linux   | arm64 | `crunchy-linux-arm64`            |
-| Windows | amd64 | `crunchy-windows-amd64.exe`     |
-| Windows | arm64 | `crunchy-windows-arm64.exe`     |
+Pure Go / CGO-free: `CGO_ENABLED=0 go build -o crunchy ./cmd/crunchy` works, so
+you can cross-compile for any OS/arch from one machine if you want.
 
 ## Requirements
 
-- **[FFmpeg](https://www.ffmpeg.org/download.html#get-packages)** — muxing (the
-  installer auto-installs it when a package manager is present).
+- **[Go](https://go.dev/dl/)** 1.25+ — to build.
+- **[FFmpeg](https://www.ffmpeg.org/download.html#get-packages)** — muxing
+  (ffmpeg + ffprobe on your `PATH`).
 - **A Crunchyroll account** — Premium-only content needs a Premium account (this
   can't be bypassed; a free trial is enough).
 - **A Widevine CDM** — a `.wvd` file (or `client_id.bin` + `private_key.pem`),
@@ -114,8 +96,7 @@ curl -sX POST http://127.0.0.1:8080/api/download \
 
 ## Optional: terminal CLI
 
-The same downloader is available as a headless CLI (not installed by the
-one-liner; build it from source):
+The same downloader is available as a headless CLI:
 
 ```sh
 go build -o crunchyroll-downloader ./cmd/crunchyroll-downloader
@@ -142,25 +123,6 @@ First season of *Hell's Paradise* as MP4:
 Batch from a file (one URL per line):
 ```sh
 ./crunchyroll-downloader --file list.txt --etp-rt REPLACE_THIS --subs-lang pt-BR
-```
-
-## Building from source
-
-Requirements: [Go](https://go.dev/dl/), and the [templ CLI](https://github.com/a-h/templ)
-(only if you edit `*.templ` UI files).
-
-```sh
-git clone https://github.com/byescaleira/crunchy.git
-cd crunchy
-go build -o crunchy ./cmd/crunchy
-```
-
-If you edit UI `*.templ` files, regenerate the committed Go output **from inside
-`internal/web/`** (so paths match the committed convention) then rebuild:
-
-```sh
-( cd internal/web && templ generate )
-go build ./cmd/crunchy
 ```
 
 ## Help
