@@ -27,7 +27,7 @@ type Status string
 const (
 	StatusQueued      Status = "queued"
 	StatusDownloading Status = "downloading"
-	StatusMuxing       Status = "muxing"
+	StatusMuxing      Status = "muxing"
 	StatusDone        Status = "done"
 	StatusError       Status = "error"
 	StatusCancelled   Status = "cancelled" // user-cancelled mid-flight
@@ -141,10 +141,10 @@ type Job struct {
 	RestartKind string
 	RestartID   string
 
-	events   chan Event
+	events    chan Event
 	broadcast func(EnvelopeEvent)
-	cancel   context.CancelFunc // set in Enqueue; Cancel() calls it to abort the task
-	donec   chan struct{}
+	cancel    context.CancelFunc // set in Enqueue; Cancel() calls it to abort the task
+	donec     chan struct{}
 
 	mu       sync.RWMutex
 	status   Status
@@ -152,6 +152,13 @@ type Job struct {
 	segDone  int
 	segTotal int
 	phase    string
+
+	// output is the final file the download produced (name + absolute path),
+	// announced via Progress.Output as soon as it is known. The server serves
+	// it to a remote client and deletes it after delivery; "" until announced
+	// or after it has been shipped+removed.
+	outputName string
+	outputPath string
 }
 
 // Status reports the job's current state.
@@ -183,6 +190,22 @@ func (j *Job) Segment() (int, int) {
 	return j.segDone, j.segTotal
 }
 
+// OutputName reports the basename of the file the download produced, or "" if
+// none was announced (or it has already been shipped+removed).
+func (j *Job) OutputName() string {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.outputName
+}
+
+// OutputPath reports the absolute path of the file the download produced, or ""
+// if none was announced (or it has already been shipped+removed).
+func (j *Job) OutputPath() string {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.outputPath
+}
+
 // Events returns the channel of progress events. It is closed when the job
 // finishes; ranging over it drains the buffered events then exits.
 func (j *Job) Events() <-chan Event { return j.events }
@@ -207,6 +230,17 @@ func (j *Job) setSegment(done, total int) {
 func (j *Job) setPhase(p string) {
 	j.mu.Lock()
 	j.phase = p
+	j.mu.Unlock()
+}
+
+// SetOutput records the final output file (name + path) the download announced.
+// Called from channelProgress.Output once the path is known; the server clears
+// it (SetOutput("", "")) after shipping the file to a remote client so a second
+// grab 404s. Exported so the server package (and tests) can read/clear it.
+func (j *Job) SetOutput(name, path string) {
+	j.mu.Lock()
+	j.outputName = name
+	j.outputPath = path
 	j.mu.Unlock()
 }
 
@@ -264,6 +298,14 @@ type Manager struct {
 	order []string
 	sem   chan struct{}
 
+	// queue is the FIFO of jobs waiting to start. Enqueue pushes here; a single
+	// dispatcher goroutine (started in NewManager) pulls in order and only
+	// launches a runner after acquiring a sem slot — so the i-th queued job gets
+	// the i-th freed slot (first enqueued starts first). The buffer (1024) is
+	// far above any realistic season/series size, so Enqueue never blocks in
+	// practice; the dispatcher drains continuously as slots free.
+	queue chan dispatchItem
+
 	subsMu sync.Mutex
 	subs   map[chan EnvelopeEvent]struct{}
 	// tap, when set via SetTap, receives every EnvelopeEvent the Manager
@@ -286,15 +328,41 @@ func (m *Manager) SetTap(f func(EnvelopeEvent)) {
 
 // NewManager creates a Manager that runs up to maxConcurrent jobs at once. A
 // value below 1 is clamped to 1 (strictly serial), so a zero-value config still
-// works.
+// works. A single dispatcher goroutine is started here and runs for the
+// Manager's lifetime, draining the FIFO queue and launching runners in
+// enqueue order.
 func NewManager(maxConcurrent int) *Manager {
 	if maxConcurrent < 1 {
 		maxConcurrent = 1
 	}
-	return &Manager{
-		jobs: map[string]*Job{},
-		sem:  make(chan struct{}, maxConcurrent),
-		subs: map[chan EnvelopeEvent]struct{}{},
+	m := &Manager{
+		jobs:  map[string]*Job{},
+		sem:   make(chan struct{}, maxConcurrent),
+		queue: make(chan dispatchItem, 1024),
+		subs:  map[chan EnvelopeEvent]struct{}{},
+	}
+	go m.dispatch()
+	return m
+}
+
+// dispatchItem is one queued job awaiting a concurrency slot.
+type dispatchItem struct {
+	ctx  context.Context
+	j    *Job
+	task Task
+}
+
+// dispatch is the single owner of slot acquisition: it pulls queued jobs in FIFO
+// order and launches a runner only after acquiring a sem slot. Because the
+// dispatcher (not the runners) acquires sem, the i-th queued job gets the i-th
+// freed slot — first enqueued starts first. Runners release their slot in run's
+// defer. A buffered channel's send is not FIFO among blocked senders, which is
+// why the runners can't acquire sem themselves (that was the racy, out-of-order
+// path this replaces).
+func (m *Manager) dispatch() {
+	for it := range m.queue {
+		m.sem <- struct{}{}
+		go m.run(it.ctx, it.j, it.task)
 	}
 }
 
@@ -331,7 +399,10 @@ func (m *Manager) Enqueue(spec JobSpec) *Job {
 	m.order = append(m.order, j.ID)
 	m.mu.Unlock()
 
-	go m.run(ctx, j, spec.Task)
+	// Hand the job to the dispatcher (not run directly): it pulls the queue in
+	// FIFO order and acquires a slot before launching, so jobs start in the
+	// order they were enqueued.
+	m.queue <- dispatchItem{ctx: ctx, j: j, task: spec.Task}
 	return j
 }
 
@@ -348,13 +419,14 @@ func (m *Manager) EnqueueMany(specs []JobSpec) []*Job {
 	return out
 }
 
-// run is the per-job runner. It blocks on the concurrency semaphore, runs the
-// task with the job's context + a channelProgress, records the terminal state,
-// and closes the job's event/done channels so subscribers can drain and exit. A
-// context error from the task (Cancel was called) is recorded as StatusCancelled
-// rather than StatusError, so the card reads "cancelled" not "failed".
+// run is the per-job runner. The dispatcher has already acquired the
+// concurrency slot for this job; run runs the task with the job's context + a
+// channelProgress, records the terminal state, and closes the job's event/done
+// channels so subscribers can drain and exit. The defer releases the slot the
+// dispatcher acquired. A context error from the task (Cancel was called) is
+// recorded as StatusCancelled rather than StatusError, so the card reads
+// "cancelled" not "failed".
 func (m *Manager) run(ctx context.Context, j *Job, task Task) {
-	m.sem <- struct{}{}
 	defer func() {
 		<-m.sem
 		j.cancel() // idempotent: no-op if already cancelled or already completed
@@ -480,6 +552,16 @@ func (m *Manager) Cancel(id string) bool {
 	return true
 }
 
+// CancelAll cancels every non-terminal job in the manager: running jobs abort at
+// their next I/O boundary and queued jobs cancel when the dispatcher starts them.
+// Terminal jobs (done/error/cancelled) are left in place — Cancel is a no-op on
+// them. Used by the Jobs-page "Cancel all" button.
+func (m *Manager) CancelAll() {
+	for _, j := range m.List() {
+		m.Cancel(j.ID)
+	}
+}
+
 // Delete removes a terminal job from the Manager and broadcasts an EventRemoved
 // so subscribers drop the card live. A still-running job is not removed (returns
 // false) — the caller must Cancel it first and let it reach a terminal state.
@@ -539,4 +621,12 @@ func (c *channelProgress) Segment(done, total int) {
 	pct := episodeProgress(c.phase, done, total)
 	c.job.setSegment(pct, 100)
 	c.job.emit(Event{Type: EventSegment, Done: pct, Total: 100})
+}
+
+// Output records the download's final output file on the Job (no event is
+// emitted: the SSE handler reads Job.OutputName()/OutputPath() when it sends
+// the terminal "done", and the server-side handlers read them directly to serve
+// + delete the file). A no-op output ("", "") clears it after delivery.
+func (c *channelProgress) Output(name, path string) {
+	c.job.SetOutput(name, path)
 }

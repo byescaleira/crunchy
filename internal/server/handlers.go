@@ -1,13 +1,17 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
 	"crunchyroll-downloader/internal/browser"
 	"crunchyroll-downloader/internal/crunchy"
+	"crunchyroll-downloader/internal/jobs"
 	"crunchyroll-downloader/internal/media"
 	"crunchyroll-downloader/internal/web"
 )
@@ -426,7 +430,8 @@ func (s *Server) handleDownloadPost(w http.ResponseWriter, r *http.Request) {
 		opts.SubsLangs = []string{"en-US"}
 	}
 
-	if _, err := s.enqueue(kind, id, opts); err != nil {
+	started, err := s.enqueue(kind, id, opts)
+	if err != nil {
 		opts := s.downloadFormOpts(kind, id)
 		opts.SelectedAudio = audio
 		opts.SelectedSubs = subs
@@ -439,8 +444,24 @@ func (s *Server) handleDownloadPost(w http.ResponseWriter, r *http.Request) {
 
 	// Success: empty body + HX-Trigger. The layout's closeDownloadModal listener
 	// closes the dialog and clears the form; downloadsUpdated refreshes
-	// #download-queue.
-	w.Header().Set("HX-Trigger", `{"closeDownloadModal":null,"downloadsUpdated":null}`)
+	// #download-queue. jobStarted carries a toast title (the single episode's
+	// label, or an "N queued" count) so the page the user enqueued from can show
+	// feedback without leaving — the toast listener lives in layout.templ.
+	var toastTitle string
+	switch n := len(started); {
+	case n == 1:
+		toastTitle = started[0].Label
+	case n > 1:
+		toastTitle = fmt.Sprintf("%d downloads queued", n)
+	default:
+		toastTitle = "Download started"
+	}
+	trigger, _ := json.Marshal(map[string]any{
+		"closeDownloadModal": nil,
+		"downloadsUpdated":   nil,
+		"jobStarted":         map[string]string{"title": toastTitle},
+	})
+	w.Header().Set("HX-Trigger", string(trigger))
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -448,8 +469,30 @@ func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
 	render(w, r, web.JobsPage(s.manager.List()))
 }
 
+// handleJobsList renders the jobs partial swapped into whichever jobs container
+// requested it. The default (no view) renders the Jobs page's status-grouped list
+// (Queued / Downloading / Completed / Errors) — every job including terminal ones,
+// so the page is a full history. ?view=queue renders the active-only list used by
+// a Browse "Now downloading" panel. The URL is chosen client-side via each
+// container's data-jobs-url attribute (see refreshJobs in layout.templ).
 func (s *Server) handleJobsList(w http.ResponseWriter, r *http.Request) {
-	render(w, r, web.JobsList(s.manager.List()))
+	js := s.manager.List()
+	if r.URL.Query().Get("view") == "queue" {
+		render(w, r, web.JobsQueue(js))
+		return
+	}
+	render(w, r, web.JobsListSections(js))
+}
+
+// handleJobsCancelAll cancels every non-terminal job at once (running jobs abort
+// at their next I/O boundary; queued jobs cancel when the dispatcher starts them).
+// It is an HTML POST route (not /api/*) so CORS is unchanged, and it fires a
+// jobsChanged HX-Trigger so the page refreshes whichever jobs container is
+// present. Mirrors the per-card handleJobCancel pattern.
+func (s *Server) handleJobsCancelAll(w http.ResponseWriter, r *http.Request) {
+	s.manager.CancelAll()
+	w.Header().Set("HX-Trigger", `{"jobsChanged":null}`)
+	w.WriteHeader(http.StatusOK)
 }
 
 // handleJobCancel aborts a running (or queued) job by cancelling its context.
@@ -478,6 +521,64 @@ func (s *Server) handleJobDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("HX-Trigger", `{"jobsChanged":null}`)
 	w.WriteHeader(http.StatusOK)
+}
+
+// handleJobFile streams a completed job's output file to whichever client
+// requested it. The "Baixar" button on a done card and the popover's auto-
+// download both hit this route. When the requester is the host itself (loopback
+// or one of the host's own interface IPs — the Mac reaching its own panel over
+// its LAN IP), the file is served and KEPT so the Mac's downloads persist. When
+// the requester is remote (a phone on the LAN), the file is deleted after a
+// complete, clean send — so the Mac stops holding it and the phone ends up with
+// the only copy, matching "temporário no servidor até que seja baixado no
+// client." A partial/aborted send leaves the file in place so a flaky client can
+// retry. The job's output pointer is cleared once the file is gone so a second
+// grab 404s instead of serving a stale path.
+func (s *Server) handleJobFile(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	j, ok := s.manager.Get(id)
+	if !ok || j.Status() != jobs.StatusDone {
+		http.NotFound(w, r)
+		return
+	}
+	path, name := j.OutputPath(), j.OutputName()
+	if path == "" || name == "" {
+		http.NotFound(w, r)
+		return
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		j.SetOutput("", "")
+		http.NotFound(w, r)
+		return
+	}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		j.SetOutput("", "")
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	w.Header().Set("Content-Type", videoContentType(name))
+	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
+	n, copyErr := io.Copy(w, f)
+	f.Close()
+	// Delete only on a clean, complete send from a remote client: the host
+	// keeps its copy, and a partial send leaves the file for a retry.
+	if copyErr == nil && n == info.Size() && !isLocalPeer(r) {
+		_ = os.Remove(path)
+		j.SetOutput("", "")
+	}
+}
+
+// videoContentType picks a reasonable Content-Type for the download attachment
+// by extension (.mp4 → video/mp4, else the Matroska container, incl. .mkv).
+func videoContentType(name string) string {
+	if strings.HasSuffix(name, ".mp4") {
+		return "video/mp4"
+	}
+	return "video/x-matroska"
 }
 
 // handleJobRestart re-enqueues a job's target using the download opts stored when

@@ -36,6 +36,47 @@ templ Layout(title, active string) {
 				(function () {
 					if (window.__crdlJobs) { return; }
 					window.__crdlJobs = true;
+					// autoFired tracks which jobs we've already auto-downloaded so a
+					// flaky EventSource reconnect (which re-sends a snapshot) can't
+					// trigger a second download of the same file. Cleared per page load.
+					var autoFired = {};
+					// downloadFile triggers a browser download of a job's output file
+					// (the phone's "auto-download on completion" path) and injects a
+					// visible Baixar button into the card so the user can retry by hand
+					// if the automatic download is blocked (iOS Safari often blocks
+					// programmatic downloads outside a user gesture). The server only
+					// sends file/url on a done event for remote subscribers, so this
+					// never fires on the host (the Mac keeps its file, no popup).
+					function downloadFile(id, file, url) {
+						if (autoFired[id]) { return; }
+						autoFired[id] = true;
+						var a = document.createElement("a");
+						a.href = url;
+						a.download = file || "";
+						a.style.display = "none";
+						document.body.appendChild(a);
+						a.click();
+						setTimeout(function () { if (a.parentNode) { document.body.removeChild(a); } }, 1000);
+						injectBaixar(id, file, url);
+					}
+					// injectBaixar adds a Baixar button to the card's terminal control
+					// group so a live-watched job (rendered while still running, before
+					// the server-rendered button would exist) still gets a fallback grab
+					// link once it completes. Idempotent per card.
+					function injectBaixar(id, file, url) {
+						var card = document.getElementById("job-" + id);
+						if (!card) { return; }
+						var group = card.querySelector('[data-controls="terminal"]');
+						if (!group || group.querySelector('[data-baixar]')) { return; }
+						var a = document.createElement("a");
+						a.setAttribute("data-baixar", "1");
+						a.className = "btn btn-ghost btn-xs rounded-full gap-1 text-white/70 hover:text-primary";
+						a.href = url;
+						a.download = file || "";
+						a.title = "Baixar o arquivo para este dispositivo";
+						a.innerHTML = "<span>Baixar</span>";
+						group.insertBefore(a, group.firstChild);
+					}
 					var dotColor = {
 						queued: "bg-white/25",
 						downloading: "bg-primary",
@@ -153,6 +194,13 @@ templ Layout(title, active string) {
 						if (label) {
 							label.textContent = d.status === "error" ? "Failed" : (d.status === "cancelled" ? "Cancelled" : "Done");
 						}
+						// A done event for a successful job carries the output file
+						// name + grab URL only when this client is remote (the server
+						// decides per-subscriber). Auto-download it to this device and
+						// inject a Baixar fallback button; absent for the host.
+						if (d.status === "done" && d.file && d.url) {
+							downloadFile(d.id, d.file, d.url);
+						}
 					});
 					// A removed event drops the whole card from the page (the Manager
 					// deleted a terminal job). No list refresh needed.
@@ -188,16 +236,20 @@ templ Layout(title, active string) {
 						htmx.trigger("#download-queue", "refresh");
 					}
 				});
-				// refreshJobs re-fetches /jobs/list into whichever jobs container is
-				// present (#download-queue on Browse, #jobs-list on Jobs). It is the
-				// authoritative snapshot of every job's current status/progress, so it is
-				// used both after a per-card cancel/delete/restart (jobsChanged) and when
-				// the tab becomes visible again (visibilitychange) — see below.
+				// refreshJobs re-fetches the jobs partial into whichever jobs container
+				// is present (#download-queue on Browse, #jobs-list on Jobs). The URL is
+				// read from the container's data-jobs-url attribute so each page refreshes
+				// its own view (Jobs → the status sections, Browse → the active queue),
+				// falling back to /jobs/list. It is the authoritative snapshot of every
+				// job's current status/progress, so it is used both after a per-card
+				// cancel/delete/restart (jobsChanged) and when the tab becomes visible
+				// again (visibilitychange) — see below.
 				function refreshJobs() {
 					if (!window.htmx) { return; }
 					var t = document.getElementById("download-queue") || document.getElementById("jobs-list");
 					if (t) {
-						htmx.ajax("GET", "/jobs/list", { target: t, swap: "innerHTML" });
+						var url = t.getAttribute("data-jobs-url") || "/jobs/list";
+						htmx.ajax("GET", url, { target: t, swap: "innerHTML" });
 					}
 				}
 				// jobsChanged is fired by the per-card cancel/delete/restart handlers.
@@ -213,6 +265,130 @@ templ Layout(title, active string) {
 						refreshJobs();
 					}
 				});
+			</script>
+			<div id="toast-container" class="toast toast-top toast-end z-50"></div>
+			<script>
+				// Toast on download start + active-jobs nav badge + browse-state
+				// restore. None of this round-trips to the server — it is all
+				// client-side state layered on the existing multiplexed SSE stream.
+				(function () {
+					// --- Toast ---------------------------------------------------------
+					// jobStarted is fired by the POST /downloads HX-Trigger header with
+					// {title: <episode label | "N downloads queued">}. Show a success
+					// toast and stay on the page the user enqueued from.
+					var toastBox = document.getElementById("toast-container");
+					function showToast(msg) {
+						if (!toastBox) { return; }
+						var el = document.createElement("div");
+						el.className = "alert alert-success shadow-lg atv-glass rounded-box border border-white/10 py-2 px-3 text-sm";
+						el.innerHTML =
+							'<span class="inline-flex items-center gap-2">' +
+							'<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' +
+							'<span class="toast-msg"></span></span>';
+						el.querySelector(".toast-msg").textContent = msg;
+						toastBox.appendChild(el);
+						setTimeout(function () {
+							el.classList.add("opacity-0", "transition-opacity", "duration-300");
+							setTimeout(function () { el.remove(); }, 320);
+						}, 3200);
+					}
+					document.addEventListener("jobStarted", function (e) {
+						var title = (e.detail && e.detail.title) || "Download started";
+						showToast("Download started — " + title);
+					});
+
+					// --- Active-jobs nav badge -----------------------------------------
+					// Maintain the set of non-terminal job ids from the multiplexed SSE
+					// stream and reflect its size on the Jobs pill. The snapshot on
+					// connect seeds it, so no extra request is needed.
+					var navJobs = document.getElementById("nav-jobs");
+					var navCount = null;
+					if (navJobs) {
+						navCount = document.createElement("span");
+						navCount.id = "nav-jobs-count";
+						navCount.className = "badge badge-sm badge-primary crdl-badge-blink ml-2 hidden";
+						navCount.textContent = "0";
+						navJobs.appendChild(navCount);
+					}
+					var active = {};
+					function syncBadge() {
+						if (!navCount) { return; }
+						var n = 0;
+						for (var k in active) { if (active.hasOwnProperty(k)) { n++; } }
+						navCount.textContent = String(n);
+						navCount.classList.toggle("hidden", n === 0);
+					}
+					function isActive(status) {
+						return status === "queued" || status === "downloading" || status === "muxing";
+					}
+					function trackStatus(id, status) {
+						if (isActive(status)) { active[id] = true; }
+						else { delete active[id]; }
+						syncBadge();
+					}
+					// The multiplexed EventSource is created in the first script block.
+					// It is not reachable by name from here, so attach a second
+					// EventSource on the same stream purely to drive the badge (the
+					// server's snapshot+live events keep it in sync).
+					var badgeEs = new EventSource("/jobs/events");
+					badgeEs.addEventListener("status", function (e) {
+						var d = JSON.parse(e.data);
+						trackStatus(d.id, d.status);
+					});
+					badgeEs.addEventListener("done", function (e) {
+						var d = JSON.parse(e.data);
+						trackStatus(d.id, d.status);
+					});
+					badgeEs.addEventListener("removed", function (e) {
+						var d = JSON.parse(e.data);
+						delete active[d.id];
+						syncBadge();
+					});
+					badgeEs.addEventListener("error", function () {});
+
+					// --- Browse-state restore ------------------------------------------
+					// The nav is full-page links, so leaving Browse to Jobs/Settings
+					// drops the series/search the user was on. Persist the last browse
+					// URL and, when on Jobs/Settings, point the Browse pill at it
+					// instead of /browse (popular). On browse pages the
+					// server-rendered href stays /browse so the pill still goes to
+					// popular while browsing.
+					var LAST_KEY = "crdl.browse.last";
+					var path = location.pathname;
+					var isBrowse = path === "/browse" || path.indexOf("/series/") === 0;
+					if (isBrowse) {
+						try {
+							localStorage.setItem(LAST_KEY, path + location.search);
+						} catch (x) {}
+					}
+					if (path === "/jobs" || path === "/settings") {
+						var last = null;
+						try { last = localStorage.getItem(LAST_KEY); } catch (x) {}
+						var navBrowse = document.getElementById("nav-browse");
+						if (last && navBrowse) { navBrowse.href = last; }
+					}
+					// Expanded-season restore: if the series page reloaded with a
+					// previously-expanded season, re-fetch its episodes into #episodes.
+					if (path.indexOf("/series/") === 0 && window.htmx) {
+						var eps = document.getElementById("episodes");
+						if (eps && eps.dataset.seriesId) {
+							var sk = "crdl.browse.season." + eps.dataset.seriesId;
+							var seasonId = null;
+							try { seasonId = localStorage.getItem(sk); } catch (x) {}
+							if (seasonId) {
+								htmx.ajax("GET", "/season/" + encodeURIComponent(seasonId) + "/episodes", { target: "#episodes", swap: "innerHTML" });
+							}
+							// Remember which season a View click expanded.
+							document.addEventListener("click", function (ev) {
+								var btn = ev.target.closest("[data-season-id]");
+								if (!btn) { return; }
+								try {
+									localStorage.setItem("crdl.browse.season." + eps.dataset.seriesId, btn.dataset.seasonId);
+								} catch (x) {}
+							});
+						}
+					}
+				})();
 			</script>
 		</body>
 	</html>
@@ -252,9 +428,9 @@ templ navbar(active string) {
 					<span class="font-semibold tracking-tight text-sm text-white/90 hidden md:inline">Crunchy Downloader</span>
 				</a>
 				<div class="flex items-center gap-1 shrink-0">
-					@navLink("Settings", "/settings", active == "settings")
-					@navLink("Browse", "/browse", active == "browse")
-					@navLink("Jobs", "/jobs", active == "jobs")
+					@navLink("", "Settings", "/settings", active == "settings")
+					@navLink("nav-browse", "Browse", "/browse", active == "browse")
+					@navLink("nav-jobs", "Jobs", "/jobs", active == "jobs")
 				</div>
 				<form action="/browse" method="get" class="relative ml-auto w-full max-w-sm min-w-0">
 					@iconSearch("h-4 w-4 text-white/40 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none")
@@ -272,11 +448,16 @@ templ navbar(active string) {
 }
 
 // navLink is a section pill inside the capsule. The active link gets a solid
-// primary fill; inactive links are quiet off-white that brighten on hover.
-templ navLink(label, href string, active bool) {
-	if active {
-		<a class="px-4 py-1.5 text-sm font-medium text-primary-content bg-primary rounded-full shadow-lg shadow-primary/30" href={ href }>{ label }</a>
-	} else {
-		<a class="px-4 py-1.5 text-sm font-medium text-white/55 hover:text-white rounded-full hover:bg-white/10 transition-colors" href={ href }>{ label }</a>
-	}
+// primary fill; inactive links are quiet off-white that brighten on hover. id,
+// when non-empty, lets JS target the pill (Browse gets "nav-browse", Jobs gets
+// "nav-jobs" so the active-jobs badge can be appended and the Browse href can be
+// rewritten to restore the last browse location); an empty id is omitted so the
+// Settings pill renders no id attribute.
+templ navLink(id, label, href string, active bool) {
+	{{ cls := "px-4 py-1.5 text-sm font-medium text-white/55 hover:text-white rounded-full hover:bg-white/10 transition-colors"
+	   if active {
+	   	cls = "px-4 py-1.5 text-sm font-medium text-primary-content bg-primary rounded-full shadow-lg shadow-primary/30"
+	   }
+	}}
+	<a class={ cls } href={ href } if id != "" { id={ id } }>{ label }</a>
 }

@@ -1,7 +1,7 @@
 // crunchyroll-downloader is the original command-line downloader. It builds a
 // crunchy.Client, resolves the requested URL, and drives a download.Downloader
 // over it. Output is byte-identical to the pre-refactor CLI; the server binary
-// (cmd/crunchy-server) reuses the same internal packages.
+// (cmd/crunchy) reuses the same internal packages.
 package main
 
 import (

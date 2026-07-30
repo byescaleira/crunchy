@@ -21,9 +21,9 @@ import (
 // nested under a "User Data" dir (Arc), and the macOS keychain entry holding its
 // cookie-encryption password.
 type chromiumVendor struct {
-	name     string       // display name surfaced to the UI
-	appDir   string       // profiles dir under ~/Library/Application Support
-	userData bool         // profiles are under <appDir>/User Data (Arc)
+	name     string        // display name surfaced to the UI
+	appDir   string        // profiles dir under ~/Library/Application Support
+	userData bool          // profiles are under <appDir>/User Data (Arc)
 	keychain keychainEntry // the "Safe Storage" keychain item
 }
 

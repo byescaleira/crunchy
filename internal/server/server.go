@@ -2,9 +2,10 @@
 // lets the user paste their etp-rt token, browse a series' seasons and episodes,
 // and enqueue downloads that run through internal/jobs (which reuses the
 // internal/download pipeline). Progress streams back over SSE. The server is
-// single-user and binds to 127.0.0.1 only (enforced by the cmd); the etp-rt
-// cookie is kept in memory for the session and optionally persisted to
-// data-dir/config.json with 0600 — it is never logged.
+// single-user; the cmd binds all interfaces by default (LAN-reachable) and can be
+// restricted to localhost via -addr 127.0.0.1:<port>. The etp-rt cookie is kept in
+// memory for the session and optionally persisted to data-dir/config.json with
+// 0600 — it is never logged.
 package server
 
 import (
@@ -94,9 +95,8 @@ type Server struct {
 	buildSeasonTasks func(seasonID string, opts DownloadOpts) ([]jobs.JobSpec, error)
 	buildSeriesTasks func(seriesID string, opts DownloadOpts) ([]jobs.JobSpec, error)
 	outputDir        string
-	cfg              config // single source of truth for persisted prefs (mu-guarded)
+	cfg              config                  // single source of truth for persisted prefs (mu-guarded)
 	restartOpts      map[string]DownloadOpts // opts to re-enqueue a job by id (mu-guarded); restart is per-episode
-	doneGrace        time.Duration           // how long a done job lingers before auto-removal (watchJob)
 
 	// logState carries the per-job bookkeeping the structured logger needs to
 	// add duration to the completion line and throttle the per-segment progress
@@ -119,10 +119,9 @@ func New(dataDir, etpRt string, debug bool) (*Server, error) {
 		cfgPath:     filepath.Join(dataDir, "config.json"),
 		debug:       debug,
 		restartOpts: map[string]DownloadOpts{},
-		doneGrace:   defaultDoneGrace,
 		log:         logging.New(os.Stderr),
-		logStarts:    map[string]time.Time{},
-		logSeg:       map[string]int{},
+		logStarts:   map[string]time.Time{},
+		logSeg:      map[string]int{},
 	}
 
 	// Always load the saved config so the last-used download prefs (and the
@@ -164,6 +163,9 @@ func (s *Server) configure(etpRt, outputDir string) error {
 	if err != nil {
 		return err
 	}
+	// Look for the Widevine CDM in the data-dir first, then the working dir, so
+	// the installed `crunchy` command finds it regardless of where it is run.
+	client.WvdDir = s.dataDir
 	s.mu.Lock()
 	s.api = client
 	s.outputDir = outputDir
@@ -364,8 +366,9 @@ func seasonLabel(episodes []media.SeasonEpisode) string {
 // sortSeasonEpisodesAscending orders a season's episodes by episode number so a
 // download starts at the smallest episode and climbs to the largest. The CMS
 // usually returns them in order, but the user wants this guaranteed regardless
-// of the API's ordering, so we sort explicitly before building specs (enqueue
-// order = download start order, since the Manager's slot semaphore is FIFO).
+// of the API's ordering, so we sort explicitly before building specs. The
+// Manager's dispatcher starts jobs in enqueue order, so the sorted spec order
+// is the order episodes actually begin downloading.
 func sortSeasonEpisodesAscending(episodes []media.SeasonEpisode) {
 	sort.Slice(episodes, func(i, j int) bool {
 		return episodes[i].EpisodeNumber < episodes[j].EpisodeNumber
@@ -405,7 +408,6 @@ func (s *Server) enqueue(kind, id string, opts DownloadOpts) ([]*jobs.Job, error
 		created := s.manager.EnqueueMany(specs)
 		for _, j := range created {
 			s.storeRestart(j.ID, opts)
-			s.watchJob(j)
 		}
 		return created, nil
 	case "series":
@@ -419,7 +421,6 @@ func (s *Server) enqueue(kind, id string, opts DownloadOpts) ([]*jobs.Job, error
 		created := s.manager.EnqueueMany(specs)
 		for _, j := range created {
 			s.storeRestart(j.ID, opts)
-			s.watchJob(j)
 		}
 		return created, nil
 	default:
@@ -438,7 +439,6 @@ func (s *Server) enqueue(kind, id string, opts DownloadOpts) ([]*jobs.Job, error
 			Task:          buildTask(id, opts),
 		})
 		s.storeRestart(j.ID, opts)
-		s.watchJob(j)
 		return []*jobs.Job{j}, nil
 	}
 }
@@ -478,31 +478,10 @@ func (s *Server) clearRestart(id string) {
 // errNotConfigured is returned by enqueue when no token is on file.
 var errNotConfigured = fmt.Errorf("save your etp_rt token in Settings first")
 
-// defaultDoneGrace is how long a successfully completed job stays on the page
-// before it auto-removes. Long enough for the user to see the green "Done" + 100%
-// state, short enough that finished episodes don't pile up in the list. Failed /
-// cancelled jobs are NOT auto-removed — they stay so the user can see the failure
-// and Restart or Delete.
-const defaultDoneGrace = 2 * time.Second
-
-// watchJob auto-removes a job once it completes successfully, after s.doneGrace
-// so the card's "Done" state is visible before it fades. Failed/cancelled jobs
-// are left in place. It also clears the stored restart opts for the id so the map
-// can't grow unbounded across a long session (auto-removal bypasses the Delete
-// route, which would otherwise clear them). The Manager stays a pure lifecycle
-// library — this auto-remove is a server-level UI policy, so it lives here.
-func (s *Server) watchJob(j *jobs.Job) {
-	go func() {
-		<-j.Done()
-		if j.Status() != jobs.StatusDone {
-			return
-		}
-		time.Sleep(s.doneGrace)
-		if s.manager.Delete(j.ID) {
-			s.clearRestart(j.ID)
-		}
-	}()
-}
+// Manager returns the underlying jobs.Manager so callers can list and cancel
+// jobs (the Jobs page "Cancel all" control cancels every in-flight download). It
+// is a read-only handle to the same manager the HTTP routes use.
+func (s *Server) Manager() *jobs.Manager { return s.manager }
 
 // Handler returns the routes. It uses Go 1.22 ServeMux method+pattern routing.
 func (s *Server) Handler() http.Handler {
@@ -523,6 +502,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /jobs/list", s.handleJobsList)
 	mux.HandleFunc("GET /jobs/events", s.handleJobsEvents)
 	mux.HandleFunc("GET /jobs/{id}/events", s.handleJobEvents)
+	mux.HandleFunc("GET /jobs/{id}/file", s.handleJobFile)
+	mux.HandleFunc("POST /jobs/cancel-all", s.handleJobsCancelAll)
 	mux.HandleFunc("POST /jobs/{id}/cancel", s.handleJobCancel)
 	mux.HandleFunc("POST /jobs/{id}/delete", s.handleJobDelete)
 	mux.HandleFunc("POST /jobs/{id}/restart", s.handleJobRestart)

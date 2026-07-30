@@ -162,7 +162,12 @@ func TestParseSafariCookies_FindsEtpRt(t *testing.T) {
 	rec := make([]byte, headerSize)
 	// size (filled after we know total length) at 0x00
 	// flags at 0x04, unknown at 0x08
-	le32 := func(b []byte, v uint32) { b[0] = byte(v); b[1] = byte(v >> 8); b[2] = byte(v >> 16); b[3] = byte(v >> 24) }
+	le32 := func(b []byte, v uint32) {
+		b[0] = byte(v)
+		b[1] = byte(v >> 8)
+		b[2] = byte(v >> 16)
+		b[3] = byte(v >> 24)
+	}
 	le32(rec[0x0C:], uint32(domainOff))
 	le32(rec[0x10:], uint32(nameOff))
 	le32(rec[0x14:], uint32(pathOff))

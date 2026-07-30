@@ -61,7 +61,7 @@ func (c *Client) SendChallenge(contentId, videoToken string, challenge []byte) (
 // downloads that version — preserving the invariant that audio for version i is
 // decrypted with version i's keys before version i+1's license is fetched.
 func (c *Client) GetLicense(psshData, contentId, videoToken string) ([]*widevine.Key, error) {
-	device, err := drm.LoadWidevineDevice()
+	device, err := drm.LoadWidevineDevice(c.WvdDir)
 	if device == nil {
 		return nil, errors.New("no widevine device provided. You either need:\n- a \".wvd\" file,\n- or \"client_id.bin\" and \"private_key.pem\" files.\nI'm not sharing links for obvious reasons, but search \"ready to use cdms\" on Google :)\n")
 	} else if err != nil {

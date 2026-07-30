@@ -20,6 +20,11 @@ type Progress interface {
 	// "video", "mux"). The server uses it to drive a phase-weighted progress
 	// bar; stdoutProgress ignores it so the CLI output stays byte-identical.
 	Phase(name string)
+	// Output announces the final output file as soon as its name + path are
+	// known (before the download begins), so the server can later serve + ship
+	// it to a remote client and delete it after delivery. stdoutProgress
+	// ignores it so the CLI output stays byte-identical.
+	Output(name, path string)
 }
 
 // stdoutProgress writes to stdout via fmt, mirroring the pre-refactor CLI output
@@ -38,3 +43,7 @@ func (stdoutProgress) Segment(done, total int) {
 // Phase is a no-op for the CLI: phases are a server/UI concern, and emitting
 // anything here would change the byte-identical stdout the CLI preserves.
 func (stdoutProgress) Phase(name string) {}
+
+// Output is a no-op for the CLI: the CLI writes the file locally and keeps it,
+// so it has no use for the serve/ship/delete flow the server wires up.
+func (stdoutProgress) Output(name, path string) {}

@@ -120,6 +120,7 @@ templ seasonCard(s media.Season) {
 				class="btn btn-ghost btn-sm rounded-full gap-1.5 text-xs"
 				hx-get={ "/season/" + s.ID + "/episodes" }
 				hx-target="#episodes"
+				data-season-id={ s.ID }
 			>
 				@iconPlay("h-3.5 w-3.5")
 				<span>View</span>
@@ -244,6 +245,17 @@ templ jobControls(j *jobs.Job) {
 		</button>
 	</div>
 	<div class="flex items-center gap-1.5" data-controls="terminal" style={ terminalStyle }>
+		if j.Status() == jobs.StatusDone && j.OutputName() != "" {
+			<a
+				class="btn btn-ghost btn-xs rounded-full gap-1 text-white/70 hover:text-primary"
+				href={ "/jobs/" + j.ID + "/file" }
+				download={ j.OutputName() }
+				title="Baixar o arquivo para este dispositivo"
+			>
+				@iconDownload("h-3.5 w-3.5")
+				<span>Baixar</span>
+			</a>
+		}
 		<button
 			class="btn btn-ghost btn-xs rounded-full gap-1 text-white/70 hover:text-white"
 			hx-post={ "/jobs/" + j.ID + "/restart" }

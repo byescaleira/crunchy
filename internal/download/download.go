@@ -604,24 +604,35 @@ func (d *Downloader) Episode(ctx context.Context, baseContentId string, info med
 		ext,
 	))
 
+	// Announce the final output name + path now that they're known, so the
+	// server can later serve the file to a remote client and delete it after
+	// delivery. Fires before the skip-check below so an already-present file
+	// remains servable. Best-effort: d.Progress is always set (CLI or server).
+	if d.Progress != nil {
+		d.Progress.Output(filepath.Base(outputFile), outputFile)
+	}
+
 	if _, err := os.Stat(outputFile); err == nil {
 		d.Progress.Printf("Episode %v is already downloaded, skipping...\n", info.EpisodeMetadata.EpisodeNumber)
 		return nil
 	}
 
 	// Fetch series metadata + HD cover best-effort: enriches the mux tags
-	// (genres, synopsis, air date, maturity) and attaches the poster. A missing
+	// (genres, synopsis, air date, maturity) and attaches the cover. A missing
 	// series or image never breaks a download — the cover is just skipped. The
-	// temp cover file is cleaned up by the mux step (and by this defer as a
-	// safety net for paths that return before muxing).
+	// cover is the series poster (the same art across every episode, falling
+	// back to the episode's own art only when the series has none), so
+	// pickCoverImage is called after info.Series is resolved. The temp cover file
+	// is cleaned up by the mux step (and by this defer as a safety net for paths
+	// that return before muxing).
 	var coverFile string
 	if seriesID := info.EpisodeMetadata.SeriesID; seriesID != "" {
 		if series, err := d.API.GetSeries(seriesID); err == nil {
 			info.Series = series
-			if img, ok := media.BestImage(series.Images.PosterTall); ok {
-				coverFile, _ = d.API.DownloadImage(img.Source)
-			}
 		}
+	}
+	if img, ok := pickCoverImage(info); ok {
+		coverFile, _ = d.API.DownloadImage(img)
 	}
 	if coverFile != "" {
 		defer os.Remove(coverFile)
@@ -667,8 +678,7 @@ func (d *Downloader) Episode(ctx context.Context, baseContentId string, info med
 	for _, locale := range audioLangs {
 		guid, ok := guidByLocale[locale]
 		if !ok {
-			d.Progress.Printf("! Audio locale %s is not available for episode %v, aborting this episode.\n", locale, info.EpisodeMetadata.EpisodeNumber)
-			return nil
+			return fmt.Errorf("audio locale %s not available for episode %v", locale, info.EpisodeMetadata.EpisodeNumber)
 		}
 		versions = append(versions, audioVersion{locale: locale, contentId: guid})
 	}
@@ -709,8 +719,7 @@ func (d *Downloader) Episode(ctx context.Context, baseContentId string, info med
 
 	for _, locale := range subsLangs {
 		if firstEpisode.Subtitles[locale] == nil {
-			d.Progress.Printf("! Subtitle locale %s is not available for episode %v, aborting this episode.\n", locale, info.EpisodeMetadata.EpisodeNumber)
-			return nil
+			return fmt.Errorf("subtitle locale %s not available for episode %v", locale, info.EpisodeMetadata.EpisodeNumber)
 		}
 	}
 
@@ -850,10 +859,29 @@ func EpisodeInfoFromSeasonEpisode(episode media.SeasonEpisode) media.EpisodeInfo
 			IsPremiumOnly:      episode.IsPremiumOnly,
 			MaturityRatings:    episode.MaturityRatings,
 			SubtitleLocales:    episode.SubtitleLocales,
+			Images:             episode.Images,
 		},
 		Title:       episode.Title,
 		Description: episode.Description,
 	}
+}
+
+// pickCoverImage resolves the cover art source for an episode, preferring the
+// series poster (portrait art) — the same cover across every episode of a
+// series — then the episode's own portrait art, then the episode thumbnail as a
+// last resort. Returns the image source URL and ok=true when any art is
+// available; (img, false) means no cover attaches.
+func pickCoverImage(info media.EpisodeInfo) (string, bool) {
+	if img, ok := media.BestImage(info.Series.Images.PosterTall); ok {
+		return img.Source, true
+	}
+	if img, ok := media.BestImage(info.EpisodeMetadata.Images.PosterTall); ok {
+		return img.Source, true
+	}
+	if img, ok := media.BestImage(info.EpisodeMetadata.Images.Thumbnail); ok {
+		return img.Source, true
+	}
+	return "", false
 }
 
 // Season downloads every episode in a season list, building each episode's

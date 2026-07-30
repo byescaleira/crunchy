@@ -97,7 +97,23 @@ func (s *Server) handleJobsEvents(w http.ResponseWriter, r *http.Request) {
 			case jobs.EventError:
 				send("status", map[string]any{"id": id, "status": string(jobs.StatusError), "message": e.Message})
 			case jobs.EventDone:
-				send("done", map[string]any{"id": id, "status": string(e.Status)})
+				// Offer the auto-download payload only to remote subscribers: a
+				// successful done carries the output file name + a grab URL so the
+				// phone's browser auto-pulls the file the instant it finishes. The
+				// host (the Mac reaching its own panel) gets done WITHOUT the file
+				// so it never pops a download dialog; it still has the Baixar
+				// button on the card if it wants the file. Errors/cancels never
+				// carry a file regardless.
+				payload := map[string]any{"id": id, "status": string(e.Status)}
+				if e.Status == jobs.StatusDone && !isLocalPeer(r) {
+					if j, ok := s.manager.Get(id); ok {
+						if name := j.OutputName(); name != "" {
+							payload["file"] = name
+							payload["url"] = "/jobs/" + id + "/file"
+						}
+					}
+				}
+				send("done", payload)
 			case jobs.EventRemoved:
 				send("removed", map[string]any{"id": id})
 			}

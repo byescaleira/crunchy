@@ -163,7 +163,7 @@ templ SeriesDetailPage(series media.Series, seriesID string, seasons []media.Sea
 			@SeasonsList(seasons, seriesID, errText)
 			<div>
 				@eyebrow("Episodes")
-				<div id="episodes" class="mt-3">
+				<div id="episodes" class="mt-3" data-series-id={ seriesID }>
 					@emptyState("Select a season to list its episodes.")
 				</div>
 			</div>
@@ -423,36 +423,75 @@ templ DownloadForm(opts DownloadFormOpts, errs map[string]string) {
 	</form>
 }
 
-// JobsPage renders the jobs panel: a "Now downloading" header with a refresh
-// button, plus the current job cards. The live updates are driven by the single
-// multiplexed /jobs/events stream wired in Layout (one EventSource for the whole
-// page), so this page carries no per-card script.
+// JobsPage renders the jobs panel: a header with Refresh and "Cancel all", plus
+// the current job cards grouped into status sections (Queued / Downloading /
+// Completed / Errors). The live updates are driven by the single multiplexed
+// /jobs/events stream wired in Layout (one EventSource for the whole page), so
+// this page carries no per-card script. #jobs-list carries data-jobs-url so
+// refreshJobs (after a cancel/restart or a tab refocus) re-fetches the sections
+// view rather than a default endpoint.
 templ JobsPage(js []*jobs.Job) {
 	@Layout("Jobs", "jobs") {
 		<div class="flex flex-col gap-3">
-			<div class="flex items-center justify-between">
-				@eyebrowInline("Now downloading")
-				<button class="btn btn-ghost btn-sm rounded-full gap-1.5" hx-get="/jobs/list" hx-target="#jobs-list">
-					@iconGear("h-4 w-4")
-					<span>Refresh</span>
-				</button>
+			<div class="flex items-center justify-between gap-2">
+				@eyebrowInline("Jobs")
+				<div class="flex items-center gap-2">
+					<button
+						class="btn btn-ghost btn-sm rounded-full gap-1.5"
+						hx-post="/jobs/cancel-all"
+						hx-swap="none"
+						hx-confirm="Cancel all running and queued downloads?"
+						title="Cancel every running and queued download"
+					>
+						@iconCancel("h-4 w-4")
+						<span>Cancel all</span>
+					</button>
+					<button class="btn btn-ghost btn-sm rounded-full gap-1.5" hx-get="/jobs/list" hx-target="#jobs-list">
+						@iconGear("h-4 w-4")
+						<span>Refresh</span>
+					</button>
+				</div>
 			</div>
-			<div id="jobs-list" class="atv-card rounded-box px-5 py-2">
-				@JobsList(js)
+			<div id="jobs-list" class="atv-card rounded-box px-5 py-2" data-jobs-url="/jobs/list">
+				@JobsListSections(js)
 			</div>
 		</div>
 	}
 }
 
-// JobsList is the HTMX partial swapped into #jobs-list (and #download-queue) by
-// /jobs/list. Jobs of one season/series share a GroupID (enqueued contiguously),
-// so a section header (the GroupLabel) is rendered whenever the GroupID changes
-// between consecutive jobs. Empty state is an invitation to act.
-templ JobsList(js []*jobs.Job) {
+// JobsListSections is the HTMX partial swapped into #jobs-list by /jobs/list. It
+// groups every job into status sections in a fixed order — Queued, Downloading
+// (downloading + muxing), Completed (done), Errors (error + cancelled) — each
+// shown only when non-empty with an English header and count. Within a section
+// the manager's insertion order is preserved. Each card still carries its
+// "Series · S##E##" eyebrow, so dropping the old season group headers loses no
+// context. This is the Jobs page's full history view (terminal jobs included).
+templ JobsListSections(js []*jobs.Job) {
 	if len(js) == 0 {
 		@emptyState("No jobs yet — start a download to see it here.")
 	}
-	for _, row := range jobsRows(js) {
+	for _, sec := range jobSections(js) {
+		<div class="flex items-center gap-2 pt-3 first:pt-1">
+			<span class="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45">{ sec.Title }</span>
+			<span class="font-mono text-[11px] text-white/30">{ fmt.Sprintf("%d", len(sec.Jobs)) }</span>
+		</div>
+		for _, j := range sec.Jobs {
+			@jobCard(j)
+		}
+	}
+}
+
+// JobsQueue is the active-only HTMX partial for a Browse "Now downloading" panel
+// (view=queue): only queued / downloading / muxing jobs, so Browse stays a live
+// activity surface rather than a full history. Jobs of one season/series share a
+// GroupID (enqueued contiguously), so a section header (the GroupLabel) is
+// rendered whenever the GroupID changes between consecutive active jobs.
+templ JobsQueue(js []*jobs.Job) {
+	{{ active := activeJobs(js) }}
+	if len(active) == 0 {
+		@emptyState("No active downloads.")
+	}
+	for _, row := range jobsRows(active) {
 		if row.Group != "" {
 			<div class="flex items-center gap-2 pt-3 first:pt-1">
 				<span class="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45">{ row.Group }</span>
@@ -464,8 +503,62 @@ templ JobsList(js []*jobs.Job) {
 	}
 }
 
-// jobRow is one row in the jobs list: either a group header (Group != "") or a
-// job card (Job != nil).
+// jobSection is one status section of the Jobs page: a header title and the jobs
+// that belong to it, in insertion order.
+type jobSection struct {
+	Title string
+	Jobs  []*jobs.Job
+}
+
+// jobSections groups jobs into the fixed status sections the Jobs page shows, in
+// order: Queued, Downloading (downloading + muxing), Completed (done), Errors
+// (error + cancelled). Empty sections are omitted. Each section preserves the
+// manager's insertion order (manager.List is already insertion-ordered).
+func jobSections(js []*jobs.Job) []jobSection {
+	var queued, downloading, completed, errors []*jobs.Job
+	for _, j := range js {
+		switch j.Status() {
+		case jobs.StatusQueued:
+			queued = append(queued, j)
+		case jobs.StatusDownloading, jobs.StatusMuxing:
+			downloading = append(downloading, j)
+		case jobs.StatusDone:
+			completed = append(completed, j)
+		case jobs.StatusError, jobs.StatusCancelled:
+			errors = append(errors, j)
+		}
+	}
+	out := make([]jobSection, 0, 4)
+	if len(queued) > 0 {
+		out = append(out, jobSection{Title: "Queued", Jobs: queued})
+	}
+	if len(downloading) > 0 {
+		out = append(out, jobSection{Title: "Downloading", Jobs: downloading})
+	}
+	if len(completed) > 0 {
+		out = append(out, jobSection{Title: "Completed", Jobs: completed})
+	}
+	if len(errors) > 0 {
+		out = append(out, jobSection{Title: "Errors", Jobs: errors})
+	}
+	return out
+}
+
+// activeJobs filters the list to non-terminal jobs (queued / downloading / muxing),
+// the set the Browse "Now downloading" panel shows.
+func activeJobs(js []*jobs.Job) []*jobs.Job {
+	var out []*jobs.Job
+	for _, j := range js {
+		switch j.Status() {
+		case jobs.StatusQueued, jobs.StatusDownloading, jobs.StatusMuxing:
+			out = append(out, j)
+		}
+	}
+	return out
+}
+
+// jobRow is one row in the active jobs queue: either a group header (Group != "")
+// or a job card (Job != nil).
 type jobRow struct {
 	Group string // group label to render as a section header; empty if this is a job card
 	Job   *jobs.Job

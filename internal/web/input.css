@@ -176,6 +176,18 @@
   to { transform: rotate(360deg); }
 }
 
+/* crdl-badge-blink is the gentle pulse on the Jobs nav pill's active-jobs count
+   badge: a soft scale + opacity breathe (~1.2s) so an active download count draws
+   the eye without being frantic. Only runs while the badge is visible (count > 0);
+   the badge is hidden at 0. Frozen under prefers-reduced-motion. */
+@keyframes crdl-badge-blink {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(0.86); }
+}
+.crdl-badge-blink {
+  animation: crdl-badge-blink 1.2s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .atv-lift:hover {
     transform: none;
@@ -186,6 +198,9 @@
     transition: none;
   }
   .atv-spin {
+    animation: none;
+  }
+  .crdl-badge-blink {
     animation: none;
   }
   .atv-bar::-webkit-progress-value {

@@ -15,6 +15,88 @@ func spec(label string, task Task) JobSpec {
 	return JobSpec{Label: label, Task: task}
 }
 
+// TestEnqueue_FIFOStartOrder asserts the dispatcher starts jobs in enqueue
+// order. With concurrency N, the first N jobs start as a "wave" (their goroutines
+// run concurrently, so their relative append order is not deterministic, but the
+// SET of the first wave must be exactly the first N enqueued), and each
+// subsequent wave is the next N in order. The previous racy per-runner
+// semaphore made the first wave a random N-subset of the queue; this test
+// catches that.
+func TestEnqueue_FIFOStartOrder(t *testing.T) {
+	const n = 5
+	const concur = 2
+	m := NewManager(concur)
+
+	var mu sync.Mutex
+	startOrder := make([]int, 0, n)
+	// started[i] closes when task i has recorded its start; release[i] blocks
+	// task i until the test frees it, so a wave holds its slots and the next
+	// wave can't start until we release.
+	started := make([]chan struct{}, n)
+	release := make([]chan struct{}, n)
+	for i := range release {
+		started[i] = make(chan struct{})
+		release[i] = make(chan struct{})
+	}
+
+	specs := make([]JobSpec, 0, n)
+	for i := 0; i < n; i++ {
+		i := i
+		specs = append(specs, spec("job", func(context.Context, download.Progress) error {
+			mu.Lock()
+			startOrder = append(startOrder, i)
+			mu.Unlock()
+			close(started[i])
+			<-release[i]
+			return nil
+		}))
+	}
+	jobs := m.EnqueueMany(specs)
+
+	// wave set helper: the set of indices that started so far.
+	startedSet := func(from, to int) map[int]bool {
+		mu.Lock()
+		defer mu.Unlock()
+		s := map[int]bool{}
+		for _, v := range startOrder[from:to] {
+			s[v] = true
+		}
+		return s
+	}
+
+	// Wave 1: exactly the first `concur` jobs (0,1).
+	for i := 0; i < concur; i++ {
+		<-started[i]
+	}
+	w1 := startedSet(0, concur)
+	if len(w1) != concur || !w1[0] || !w1[1] {
+		t.Fatalf("first wave = %v, want exactly {0,1}", w1)
+	}
+
+	// Free wave 1; wave 2 must be exactly the next `concur` (2,3).
+	for i := 0; i < concur; i++ {
+		close(release[i])
+	}
+	for i := concur; i < 2*concur; i++ {
+		<-started[i]
+	}
+	w2 := startedSet(concur, 2*concur)
+	if len(w2) != concur || !w2[2] || !w2[3] {
+		t.Fatalf("second wave = %v, want exactly {2,3}", w2)
+	}
+
+	// Free wave 2; the last job (4) starts.
+	for i := concur; i < 2*concur; i++ {
+		close(release[i])
+	}
+	<-started[n-1]
+	close(release[n-1])
+
+	for _, j := range jobs {
+		<-j.Done()
+	}
+}
+
 // TestManager_EnqueueComplete drives a job through its full lifecycle and
 // checks that the channelProgress republishes the download.Progress calls as
 // events, the segment counts land on the Job, and the job ends StatusDone with
@@ -269,16 +351,16 @@ func TestEpisodeProgress(t *testing.T) {
 		total int
 		want  int
 	}{
-		{"subtitles", 0, 0, 0},  // indeterminate → base 0
-		{"subtitles", 1, 2, 2},  // 0 + 5/2 = 2
-		{"audio", 0, 3, 5},      // base 5
-		{"audio", 1, 2, 20},     // 5 + 30/2 = 20
-		{"audio", 2, 2, 35},     // completed → 5 + 30 = 35
-		{"video", 0, 0, 35},     // indeterminate → base 35
-		{"video", 1, 2, 62},     // 35 + 55/2 = 62
-		{"video", 2, 2, 90},     // completed → 35 + 55 = 90
-		{"mux", 0, 0, 90},       // base 90
-		{"", 5, 5, 0},           // unknown phase → 0
+		{"subtitles", 0, 0, 0}, // indeterminate → base 0
+		{"subtitles", 1, 2, 2}, // 0 + 5/2 = 2
+		{"audio", 0, 3, 5},     // base 5
+		{"audio", 1, 2, 20},    // 5 + 30/2 = 20
+		{"audio", 2, 2, 35},    // completed → 5 + 30 = 35
+		{"video", 0, 0, 35},    // indeterminate → base 35
+		{"video", 1, 2, 62},    // 35 + 55/2 = 62
+		{"video", 2, 2, 90},    // completed → 35 + 55 = 90
+		{"mux", 0, 0, 90},      // base 90
+		{"", 5, 5, 0},          // unknown phase → 0
 	}
 	for _, c := range cases {
 		if got := episodeProgress(c.phase, c.done, c.total); got != c.want {
@@ -324,6 +406,55 @@ func TestManager_Cancel(t *testing.T) {
 	// Cancelling an already-terminal job is a no-op.
 	if ok := m.Cancel(j.ID); ok {
 		t.Errorf("Cancel on a terminal job returned true, want false (no-op)")
+	}
+}
+
+// TestManager_CancelAll cancels every non-terminal job at once: running jobs abort
+// at their next I/O boundary and queued jobs cancel when the dispatcher starts
+// them. Terminal jobs (done/error/cancelled) are left in place — Cancel is a
+// no-op on them. Shared by the Jobs-page "Cancel all" button and the app's Pause.
+func TestManager_CancelAll(t *testing.T) {
+	m := NewManager(2) // concurrency 2: the two blockers fill both slots
+
+	// `done` is enqueued first so it grabs a slot and completes before the
+	// blockers pin both slots — otherwise done never runs and <-done.Done()
+	// would hang.
+	done := m.Enqueue(spec("done", func(context.Context, download.Progress) error { return nil }))
+	<-done.Done()
+
+	started := make(chan struct{})
+	running := m.Enqueue(spec("running", func(ctx context.Context, p download.Progress) error {
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	}))
+	<-started
+	queuedA := m.Enqueue(spec("qA", func(ctx context.Context, p download.Progress) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}))
+	queuedB := m.Enqueue(spec("qB", func(ctx context.Context, p download.Progress) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}))
+
+	m.CancelAll()
+
+	<-running.Done()
+	<-queuedA.Done()
+	<-queuedB.Done()
+
+	if got := running.Status(); got != StatusCancelled {
+		t.Errorf("running job status = %q, want cancelled", got)
+	}
+	if got := queuedA.Status(); got != StatusCancelled {
+		t.Errorf("queuedA status = %q, want cancelled", got)
+	}
+	if got := queuedB.Status(); got != StatusCancelled {
+		t.Errorf("queuedB status = %q, want cancelled", got)
+	}
+	if got := done.Status(); got != StatusDone {
+		t.Errorf("done job status = %q, want done (terminal jobs untouched)", got)
 	}
 }
 
@@ -395,4 +526,29 @@ func TestManager_Delete(t *testing.T) {
 	// Clean up so the goroutine exits.
 	m.Cancel(running.ID)
 	<-running.Done()
+}
+
+// TestChannelProgress_Output asserts the download's Progress.Output call (made
+// once the output path is known) is recorded on the Job so the server can later
+// serve + ship + delete the file. The task calls p.Output then returns nil, so
+// the job reaches StatusDone with the name + path set; SetOutput("","") clears
+// them (the post-delivery state).
+func TestChannelProgress_Output(t *testing.T) {
+	m := NewManager(1)
+	var j *Job
+	j = m.Enqueue(spec("ep1", func(ctx context.Context, p download.Progress) error {
+		p.Output("S01E01 Pilot (1080p).mkv", "/tmp/S01E01.mkv")
+		return nil
+	}))
+	<-j.Done()
+	if j.Status() != StatusDone {
+		t.Fatalf("status = %s, want done", j.Status())
+	}
+	if name, path := j.OutputName(), j.OutputPath(); name != "S01E01 Pilot (1080p).mkv" || path != "/tmp/S01E01.mkv" {
+		t.Errorf("output = %q %q, want base name + path", name, path)
+	}
+	j.SetOutput("", "")
+	if name, path := j.OutputName(), j.OutputPath(); name != "" || path != "" {
+		t.Errorf("after clear: output = %q %q, want empty", name, path)
+	}
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -69,10 +70,9 @@ func newTestServer(t *testing.T) *Server {
 	dir := t.TempDir()
 	return &Server{
 		manager:     jobs.NewManager(3),
-		dataDir:      dir,
-		cfgPath:      filepath.Join(dir, "config.json"),
-		restartOpts:  map[string]DownloadOpts{},
-		doneGrace:   defaultDoneGrace,
+		dataDir:     dir,
+		cfgPath:     filepath.Join(dir, "config.json"),
+		restartOpts: map[string]DownloadOpts{},
 	}
 }
 
@@ -347,7 +347,9 @@ func TestDownloadNew_RendersForm(t *testing.T) {
 
 func TestDownloadPost_NoAudio(t *testing.T) {
 	s := newTestServer(t)
-	s.buildTask = func(string, DownloadOpts) jobs.Task { return func(context.Context, download.Progress) error { return nil } }
+	s.buildTask = func(string, DownloadOpts) jobs.Task {
+		return func(context.Context, download.Progress) error { return nil }
+	}
 	h := s.Handler()
 	// kind=episode, an id, but no audio language checked.
 	r, w := postForm("/downloads", "kind=episode&id=ep1&videoQuality=1080p")
@@ -370,7 +372,9 @@ func TestDownloadPost_NoAudio(t *testing.T) {
 
 func TestDownloadPost_Episode(t *testing.T) {
 	s := newTestServer(t)
-	s.buildTask = func(string, DownloadOpts) jobs.Task { return func(context.Context, download.Progress) error { return nil } }
+	s.buildTask = func(string, DownloadOpts) jobs.Task {
+		return func(context.Context, download.Progress) error { return nil }
+	}
 	h := s.Handler()
 	r, w := postForm("/downloads",
 		"kind=episode&id=ep1&videoQuality=1080p&audioQuality=192k&audioLangs=ja-JP&subsLangs=en-US&format=mkv")
@@ -382,10 +386,14 @@ func TestDownloadPost_Episode(t *testing.T) {
 	if w.Body.Len() != 0 {
 		t.Errorf("expected empty body on success, got: %s", w.Body.String())
 	}
-	// The HX-Trigger header closes the modal and refreshes the queue.
+	// The HX-Trigger header closes the modal, refreshes the queue, and fires
+	// jobStarted so the page the user enqueued from shows a toast.
 	trig := w.Header().Get("HX-Trigger")
 	if !strings.Contains(trig, "closeDownloadModal") || !strings.Contains(trig, "downloadsUpdated") {
 		t.Errorf("expected HX-Trigger to close modal + refresh queue, got: %q", trig)
+	}
+	if !strings.Contains(trig, "jobStarted") || !strings.Contains(trig, `"title"`) {
+		t.Errorf("expected HX-Trigger to fire jobStarted with a title, got: %q", trig)
 	}
 	if len(s.manager.List()) != 1 {
 		t.Errorf("expected one enqueued job, got %d", len(s.manager.List()))
@@ -516,7 +524,9 @@ func TestDownloadPost_SeasonDiscoveryFails(t *testing.T) {
 
 func TestJobsList(t *testing.T) {
 	s := newTestServer(t)
-	s.buildTask = func(string, DownloadOpts) jobs.Task { return func(context.Context, download.Progress) error { return nil } }
+	s.buildTask = func(string, DownloadOpts) jobs.Task {
+		return func(context.Context, download.Progress) error { return nil }
+	}
 	s.manager.Enqueue(jobs.JobSpec{Label: "ep1", Title: "Pilot", Task: func(context.Context, download.Progress) error { return nil }})
 
 	h := s.Handler()
@@ -676,6 +686,84 @@ func TestJobRoutes_Wiring(t *testing.T) {
 	}
 }
 
+// TestJobsCancelAll_Route enqueues a mix of running, queued, and terminal jobs and
+// asserts the POST /jobs/cancel-all route cancels every non-terminal one (running
+// jobs abort; queued jobs cancel when dispatched) while leaving terminal jobs
+// untouched, and returns a jobsChanged HX-Trigger so the page refreshes.
+func TestJobsCancelAll_Route(t *testing.T) {
+	s := newTestServer(t)
+	s.buildTask = func(string, DownloadOpts) jobs.Task {
+		return func(ctx context.Context, p download.Progress) error {
+			<-ctx.Done()
+			return ctx.Err()
+		}
+	}
+	h := s.Handler()
+
+	running := s.manager.Enqueue(jobs.JobSpec{Label: "run", Title: "R", Task: func(ctx context.Context, p download.Progress) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}})
+	queued := s.manager.Enqueue(jobs.JobSpec{Label: "q", Title: "Q", Task: func(ctx context.Context, p download.Progress) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}})
+	done := s.manager.Enqueue(jobs.JobSpec{Label: "done", Title: "D", Task: func(context.Context, download.Progress) error { return nil }})
+	<-done.Done()
+
+	r, w := postForm("/jobs/cancel-all", "")
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("cancel-all status = %d, want 200", w.Code)
+	}
+	if got := w.Header().Get("HX-Trigger"); !strings.Contains(got, "jobsChanged") {
+		t.Errorf("cancel-all missing jobsChanged HX-Trigger, got %q", got)
+	}
+	<-running.Done()
+	<-queued.Done()
+	if j, _ := s.manager.Get(running.ID); j.Status() != jobs.StatusCancelled {
+		t.Errorf("running job status = %v, want cancelled", statusOr(j))
+	}
+	if j, _ := s.manager.Get(queued.ID); j.Status() != jobs.StatusCancelled {
+		t.Errorf("queued job status = %v, want cancelled", statusOr(j))
+	}
+	if j, _ := s.manager.Get(done.ID); j.Status() != jobs.StatusDone {
+		t.Errorf("done job status = %v, want done (terminal jobs untouched)", statusOr(j))
+	}
+}
+
+// TestJobsList_LocaleErrorSurfaced injects a buildTask that returns the
+// unavailable-locale error the real pipeline now produces, and asserts the job
+// ends StatusError and the message renders in the card's error line on /jobs/list
+// (not a silent done-then-vanish).
+func TestJobsList_LocaleErrorSurfaced(t *testing.T) {
+	s := newTestServer(t)
+	msg := "audio locale pt-BR not available for episode 3"
+	s.buildTask = func(string, DownloadOpts) jobs.Task {
+		return func(context.Context, download.Progress) error { return fmt.Errorf("%s", msg) }
+	}
+	r, w := postForm("/downloads", "kind=episode&id=ep3&videoQuality=1080p&audioLangs=pt-BR&subsLangs=en-US&format=mkv")
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("enqueue status = %d, body %s", w.Code, w.Body.String())
+	}
+	js := s.manager.List()
+	if len(js) != 1 {
+		t.Fatalf("expected 1 enqueued job, got %d", len(js))
+	}
+	<-js[0].Done()
+	if js[0].Status() != jobs.StatusError {
+		t.Fatalf("job status = %v, want error", js[0].Status())
+	}
+
+	h := s.Handler()
+	rl, wl := get("/jobs/list")
+	got := body(t, h, rl, wl)
+	if !strings.Contains(got, msg) {
+		t.Errorf("locale error message not surfaced in the card; got: %s", got)
+	}
+}
+
 // statusOr returns the job's status string, or "<nil>" for a nil job (test helper).
 func statusOr(j *jobs.Job) string {
 	if j == nil {
@@ -708,19 +796,56 @@ func TestJobsList_PhaseRail(t *testing.T) {
 	}
 }
 
-// TestJobsList_GroupHeader asserts a season's episodes render under one section
-// header (the GroupLabel), and a standalone episode (no GroupID) renders no header.
-func TestJobsList_GroupHeader(t *testing.T) {
+// TestJobsList_StatusSections asserts the Jobs page lists jobs grouped into the
+// four English status sections (Queued / Downloading / Completed / Errors) in
+// order, each with a header and count, and that empty sections are omitted. A
+// standalone episode (no GroupID) renders alongside grouped ones under the same
+// status section — the old season group headers are gone.
+func TestJobsList_StatusSections(t *testing.T) {
 	s := newTestServer(t)
-	s.manager.Enqueue(jobs.JobSpec{Label: "S02E01 — A", Title: "A", GroupID: "SEASON2", GroupLabel: "Frieren — Season 2", Task: func(context.Context, download.Progress) error { return nil }})
-	s.manager.Enqueue(jobs.JobSpec{Label: "S02E02 — B", Title: "B", GroupID: "SEASON2", GroupLabel: "Frieren — Season 2", Task: func(context.Context, download.Progress) error { return nil }})
-	s.manager.Enqueue(jobs.JobSpec{Label: "ep-x", Title: "X", Task: func(context.Context, download.Progress) error { return nil }})
+	// Two grouped episodes that complete (Completed section), a failed one
+	// (Errors section), and a running one (Downloading section). Queued is left
+	// empty so it's omitted.
+	doneA := s.manager.Enqueue(jobs.JobSpec{Label: "S02E01 — A", Title: "A", GroupID: "SEASON2", GroupLabel: "Frieren — Season 2", Task: func(context.Context, download.Progress) error { return nil }})
+	doneB := s.manager.Enqueue(jobs.JobSpec{Label: "S02E02 — B", Title: "B", GroupID: "SEASON2", GroupLabel: "Frieren — Season 2", Task: func(context.Context, download.Progress) error { return nil }})
+	failed := s.manager.Enqueue(jobs.JobSpec{Label: "boom", Title: "Boom", Task: func(context.Context, download.Progress) error { return fmt.Errorf("PSSH not found") }})
+	running := s.manager.Enqueue(jobs.JobSpec{Label: "running", Title: "R", Task: func(ctx context.Context, p download.Progress) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}})
+	<-doneA.Done()
+	<-doneB.Done()
+	<-failed.Done()
+
 	h := s.Handler()
 	r, w := get("/jobs/list")
 	got := body(t, h, r, w)
-	if c := strings.Count(got, "Frieren — Season 2"); c != 1 {
-		t.Errorf("group header should appear once for the 2 grouped jobs, got %d; %s", c, got)
+	// Downloading + Completed + Errors headers appear; Queued is omitted (empty).
+	for _, want := range []string{"Downloading", "Completed", "Errors"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("sections missing %q header; got: %s", want, got)
+		}
 	}
+	if strings.Contains(got, "Queued") {
+		t.Errorf("empty Queued section should be omitted; got: %s", got)
+	}
+	// Section order: Downloading before Completed before Errors.
+	if d, c, e := strings.Index(got, "Downloading"), strings.Index(got, "Completed"), strings.Index(got, "Errors"); !(d < c && c < e) {
+		t.Errorf("sections out of order: d=%d c=%d e=%d", d, c, e)
+	}
+	// The season group label is no longer rendered as a section header.
+	if strings.Contains(got, "Frieren — Season 2") {
+		t.Errorf("season group header should be gone; got: %s", got)
+	}
+	// Each card is still present regardless of grouping.
+	for _, want := range []string{running.ID, failed.ID, doneA.ID, doneB.ID} {
+		if !strings.Contains(got, want) {
+			t.Errorf("card %q missing from sections; got: %s", want, got)
+		}
+	}
+	// Clean up the running job's goroutine.
+	s.manager.Cancel(running.ID)
+	<-running.Done()
 }
 
 // TestSSE_JobEvents enqueues a job that announces a phase, publishes a segment
@@ -858,7 +983,7 @@ func TestAPIJobs_FoundAndMissing(t *testing.T) {
 	job := s.manager.Enqueue(jobs.JobSpec{Label: "ep1", Title: "Pilot", SeriesTitle: "Frieren", SeasonNumber: 1, EpisodeNumber: 3, Task: func(context.Context, download.Progress) error { return nil }})
 
 	h := s.Handler()
-	r, w := get("/api/jobs/"+job.ID)
+	r, w := get("/api/jobs/" + job.ID)
 	h.ServeHTTP(w, r)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
@@ -927,7 +1052,9 @@ func TestEnqueue_EpisodeMetadataOnJob(t *testing.T) {
 			},
 		},
 	}
-	s.buildTask = func(string, DownloadOpts) jobs.Task { return func(context.Context, download.Progress) error { return nil } }
+	s.buildTask = func(string, DownloadOpts) jobs.Task {
+		return func(context.Context, download.Progress) error { return nil }
+	}
 	js, err := s.enqueue("episode", "ep1", DownloadOpts{})
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
@@ -979,7 +1106,9 @@ func TestPersistLastOpts_KeepsTokenAndStores(t *testing.T) {
 	if err := s.saveConfig(s.cfg); err != nil {
 		t.Fatal(err)
 	}
-	s.buildTask = func(string, DownloadOpts) jobs.Task { return func(context.Context, download.Progress) error { return nil } }
+	s.buildTask = func(string, DownloadOpts) jobs.Task {
+		return func(context.Context, download.Progress) error { return nil }
+	}
 	h := s.Handler()
 	r, w := postForm("/downloads", "kind=episode&id=ep1&videoQuality=720p&audioQuality=128k&audioLangs=en-US&subsLangs=pt-BR&format=mp4&outputDir=/out/x")
 	h.ServeHTTP(w, r)
@@ -1019,7 +1148,9 @@ func TestPersistLastOpts_APIPath(t *testing.T) {
 	if err := s.saveConfig(s.cfg); err != nil {
 		t.Fatal(err)
 	}
-	s.buildTask = func(string, DownloadOpts) jobs.Task { return func(context.Context, download.Progress) error { return nil } }
+	s.buildTask = func(string, DownloadOpts) jobs.Task {
+		return func(context.Context, download.Progress) error { return nil }
+	}
 	h := s.Handler()
 	r, w := postJSON(`/api/download`, `{"kind":"episode","id":"ep1","audio":["en-US"],"quality":"720p","format":"mp4","location":"/out/api"}`)
 	h.ServeHTTP(w, r)
@@ -1224,13 +1355,13 @@ func TestSortSeasonsAscending(t *testing.T) {
 	}
 }
 
-// TestEnqueue_AutoRemovesDoneJob enqueues an episode that completes successfully
-// and asserts the watchJob watcher removes it from the Manager (and clears its
-// stored restart opts) once the grace elapses — completed downloads disappear
-// from the list. doneGrace is shortened to keep the test fast.
-func TestEnqueue_AutoRemovesDoneJob(t *testing.T) {
+// TestEnqueue_KeepsDoneJob enqueues an episode that completes successfully and
+// asserts it STAYS in the Manager — completed downloads are no longer
+// auto-removed, so the Jobs page's Completed section is meaningful (the user
+// deletes a finished card explicitly). The stored restart opts are retained too
+// (restart is a session-only affordance cleared only by the explicit Delete route).
+func TestEnqueue_KeepsDoneJob(t *testing.T) {
 	s := newTestServer(t)
-	s.doneGrace = 30 * time.Millisecond
 	s.buildTask = func(string, DownloadOpts) jobs.Task {
 		return func(context.Context, download.Progress) error { return nil }
 	}
@@ -1240,21 +1371,21 @@ func TestEnqueue_AutoRemovesDoneJob(t *testing.T) {
 	}
 	id := js[0].ID
 	<-js[0].Done()
-	waitUntil(t, time.Second, func() bool {
-		_, ok := s.manager.Get(id)
-		return !ok
-	})
-	if _, ok := s.restartOptsFor(id); ok {
-		t.Errorf("restartOpts should be cleared for an auto-removed done job")
+	// Give any would-be auto-remover ample time to (wrongly) fire; it must not.
+	time.Sleep(100 * time.Millisecond)
+	if _, ok := s.manager.Get(id); !ok {
+		t.Errorf("done job should stay in the manager (no auto-removal), but it was removed")
+	}
+	if _, ok := s.restartOptsFor(id); !ok {
+		t.Errorf("restart opts should be retained for a done job until the user deletes it")
 	}
 }
 
 // TestEnqueue_KeepsFailedJob enqueues an episode that fails and asserts it is NOT
-// auto-removed — failed jobs stay so the user can see the failure and Restart or
-// Delete. Only successful (done) jobs auto-remove.
+// removed — failed jobs stay so the user can see the failure and Restart or
+// Delete. (Done jobs also stay now; this test guards the failure case.)
 func TestEnqueue_KeepsFailedJob(t *testing.T) {
 	s := newTestServer(t)
-	s.doneGrace = 30 * time.Millisecond
 	s.buildTask = func(string, DownloadOpts) jobs.Task {
 		return func(context.Context, download.Progress) error { return fmt.Errorf("boom") }
 	}
@@ -1263,8 +1394,171 @@ func TestEnqueue_KeepsFailedJob(t *testing.T) {
 		t.Fatalf("enqueue: %v", err)
 	}
 	<-js[0].Done()
-	time.Sleep(100 * time.Millisecond) // past doneGrace
+	time.Sleep(100 * time.Millisecond)
 	if _, ok := s.manager.Get(js[0].ID); !ok {
-		t.Errorf("failed job should NOT be auto-removed, but it was")
+		t.Errorf("failed job should NOT be removed, but it was")
+	}
+}
+
+// enqueueDoneWithOutput enqueues a job whose task announces the given output
+// file (name + path) via Progress.Output then returns nil, and blocks until the
+// job reaches StatusDone. The output file is NOT created here — callers create
+// it (or not) to set up the case under test.
+func enqueueDoneWithOutput(t *testing.T, s *Server, name, path string) *jobs.Job {
+	t.Helper()
+	j := s.manager.Enqueue(jobs.JobSpec{
+		Label: "ep",
+		Task: func(ctx context.Context, p download.Progress) error {
+			p.Output(name, path)
+			return nil
+		},
+	})
+	select {
+	case <-j.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("job never reached a terminal state")
+	}
+	if j.Status() != jobs.StatusDone {
+		t.Fatalf("status = %s, want done", j.Status())
+	}
+	return j
+}
+
+// jobFileReq builds a GET /jobs/{id}/file request with a configurable peer
+// RemoteAddr (loopback for the host, a foreign IP for a remote client).
+func jobFileReq(id, remoteAddr string) (*http.Request, *httptest.ResponseRecorder) {
+	r := httptest.NewRequest(http.MethodGet, "/jobs/"+id+"/file", nil)
+	r.RemoteAddr = remoteAddr
+	return r, httptest.NewRecorder()
+}
+
+func fileExists(t *testing.T, path string) bool {
+	t.Helper()
+	_, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return false
+	}
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	return true
+}
+
+// TestHandleJobFile_RemoteDeletes: a remote client grabs a done job's file → the
+// file is streamed and then removed from the host, and the job's output pointer
+// is cleared so a second grab 404s. This is the phone's "ship + delete" path.
+func TestHandleJobFile_RemoteDeletes(t *testing.T) {
+	s := newTestServer(t)
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "ep.mkv")
+	if err := os.WriteFile(fp, []byte("video-bytes"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	j := enqueueDoneWithOutput(t, s, "ep.mkv", fp)
+	h := s.Handler()
+
+	r, w := jobFileReq(j.ID, "192.168.99.99:4242")
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if !strings.Contains(w.Header().Get("Content-Disposition"), "ep.mkv") {
+		t.Errorf("Content-Disposition = %q, want filename ep.mkv", w.Header().Get("Content-Disposition"))
+	}
+	if fileExists(t, fp) {
+		t.Error("remote grab should have deleted the file from the host")
+	}
+	if j.OutputPath() != "" {
+		t.Error("output pointer should be cleared after the remote grab")
+	}
+
+	// Second grab 404s (file gone + pointer cleared).
+	r2, w2 := jobFileReq(j.ID, "192.168.99.99:4242")
+	h.ServeHTTP(w2, r2)
+	if w2.Code != http.StatusNotFound {
+		t.Errorf("second grab status = %d, want 404", w2.Code)
+	}
+}
+
+// TestHandleJobFile_LocalKeeps: the host (loopback, or its own LAN IP) grabs a
+// done job's file → the file is served but KEPT, so the Mac's own downloads
+// persist (no "ship + delete" for the server itself).
+func TestHandleJobFile_LocalKeeps(t *testing.T) {
+	s := newTestServer(t)
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "ep.mkv")
+	if err := os.WriteFile(fp, []byte("video-bytes"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	j := enqueueDoneWithOutput(t, s, "ep.mkv", fp)
+	h := s.Handler()
+
+	r, w := jobFileReq(j.ID, "127.0.0.1:4242")
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if !fileExists(t, fp) {
+		t.Error("local grab should keep the file on the host")
+	}
+	if j.OutputPath() == "" {
+		t.Error("output pointer should still be set after a local grab")
+	}
+}
+
+// TestHandleJobFile_NoOutput: a done job that never announced an output file
+// 404s (nothing to serve).
+func TestHandleJobFile_NoOutput(t *testing.T) {
+	s := newTestServer(t)
+	j := enqueueDoneWithOutput(t, s, "", "") // no output announced
+	h := s.Handler()
+	r, w := jobFileReq(j.ID, "127.0.0.1:4242")
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", w.Code)
+	}
+}
+
+// TestHandleJobFile_MissingFile: a done job whose output file no longer exists
+// 404s and clears the stale pointer.
+func TestHandleJobFile_MissingFile(t *testing.T) {
+	s := newTestServer(t)
+	j := enqueueDoneWithOutput(t, s, "gone.mkv", "/no/such/path/gone.mkv")
+	h := s.Handler()
+	r, w := jobFileReq(j.ID, "127.0.0.1:4242")
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", w.Code)
+	}
+	if j.OutputPath() != "" {
+		t.Error("stale output pointer should be cleared when the file is missing")
+	}
+}
+
+// TestHandleJobFile_UnknownJob: a grab for an id the Manager does not know 404s.
+func TestHandleJobFile_UnknownJob(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler()
+	r, w := jobFileReq("does-not-exist", "127.0.0.1:4242")
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", w.Code)
+	}
+}
+
+// TestIsLocalPeer: loopback is local; a foreign IP is remote; the host's own
+// non-loopback IPs are local (the Mac reaching itself over its LAN IP).
+func TestIsLocalPeer(t *testing.T) {
+	for _, addr := range []string{"127.0.0.1:1", "[::1]:1"} {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.RemoteAddr = addr
+		if !isLocalPeer(r) {
+			t.Errorf("isLocalPeer(%s) = false, want true (loopback is local)", addr)
+		}
+	}
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.RemoteAddr = "203.0.113.7:1"
+	if isLocalPeer(r) {
+		t.Error("isLocalPeer(203.0.113.7) = true, want false (foreign IP is remote)")
 	}
 }

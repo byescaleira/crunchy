@@ -1,5 +1,5 @@
-// Package logging is a tiny structured logger for the crunchy-server control
-// panel. One line per event, human-readable and greppable, with a timestamp, a
+// Package logging is a tiny structured logger for the crunchy control panel.
+// One line per event, human-readable and greppable, with a timestamp, a
 // level, a bracketed component tag, a message, and key=value fields:
 //
 //	2026-07-30 14:23:01.123 -0300 INFO  [jobs] started  job=7f3a4b21 title="Solo Leveling" ep=S01E03

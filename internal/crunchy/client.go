@@ -57,6 +57,12 @@ type Client struct {
 	EtpRt    string
 	DeviceID string
 	Debug    bool
+	// WvdDir is an extra directory to search for the Widevine CDM (.wvd or the
+	// client_id.bin/private_key.pem pair), ahead of the working directory. The
+	// server sets this to its data-dir so the installed `crunchy` command finds
+	// the CDM no matter where it is run; the CLI downloader leaves it empty, which
+	// falls back to the working directory only (today's behavior).
+	WvdDir string
 }
 
 // NewClient builds a client with a fresh device id and fetches the initial
