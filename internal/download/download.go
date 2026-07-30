@@ -7,6 +7,7 @@
 package download
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -438,6 +439,77 @@ func downloadSubs(ctx context.Context, doer crunchy.Doer, url string) (string, e
 	return filename, nil
 }
 
+// assHasUsableDialogue reports whether the .ass file at path contains at least
+// one Dialogue event whose Text field carries renderable text (after ASS
+// override blocks and line-break markers are stripped).
+//
+// ffmpeg happily muxes a .ass that parses but has no usable Dialogue into an
+// empty subtitle track: the stream exists (subtitle editors list it as a
+// component) but carries zero cues, so players show nothing while mux reports
+// success. Crunchyroll lists a subtitle by its URL only (download.go checks
+// sub.URL != ""), so a locale it serves empty or signs-only slips through
+// silently. Validating the content here — before mux — turns that into a loud
+// skip instead of a silently empty track.
+func assHasUsableDialogue(path string) (bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1<<20), 1<<20)
+	inEvents := false
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "[Events]" {
+			inEvents = true
+			continue
+		}
+		if !inEvents || !strings.HasPrefix(line, "Dialogue:") {
+			continue
+		}
+		// Dialogue: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
+		// Text is everything after the 9th comma; SplitN keeps it whole so any
+		// commas inside the text itself don't split it.
+		rest := strings.TrimPrefix(line, "Dialogue:")
+		parts := strings.SplitN(rest, ",", 10)
+		if len(parts) < 10 {
+			continue
+		}
+		if hasASSRenderableText(parts[9]) {
+			return true, nil
+		}
+	}
+	return false, sc.Err()
+}
+
+// hasASSRenderableText reports whether an ASS Text field has any text mov_text
+// will actually emit as a cue. Override blocks {\...}, line-break markers
+// (\N, \n, \h) and surrounding whitespace are stripped first; whatever remains
+// is renderable. Errs toward true: a borderline event is kept rather than risk
+// skipping a valid subtitle, since mov_text only drops events that have no
+// text at all.
+func hasASSRenderableText(text string) bool {
+	// Drop override blocks {\...} — mov_text ignores their contents entirely.
+	// An override runs from '{' to the next '}', so strip those spans directly
+	// (matching on '{' rather than "{\") to also catch drawing/edge forms.
+	for {
+		i := strings.IndexByte(text, '{')
+		if i < 0 {
+			break
+		}
+		j := strings.IndexByte(text[i:], '}')
+		if j < 0 {
+			break
+		}
+		text = text[:i] + text[i+j+1:]
+	}
+	text = strings.ReplaceAll(text, `\N`, "")
+	text = strings.ReplaceAll(text, `\n`, "")
+	text = strings.ReplaceAll(text, `\h`, "")
+	return strings.TrimSpace(text) != ""
+}
+
 // Episode downloads and muxes a single episode: its subtitles, every requested
 // audio dub, and the video track, into a single MKV named after the series and
 // episode. It mutates copies of the language selections (so "all" expands per
@@ -614,6 +686,22 @@ func (d *Downloader) Episode(ctx context.Context, baseContentId string, info med
 		f, err := d.downloadSubtitles(ctx, firstEpisode.Subtitles[locale].URL)
 		if err != nil {
 			return err
+		}
+		// Guard against a silently empty subtitle track: ffmpeg muxes a .ass
+		// with no usable Dialogue into an empty stream (present in the file,
+		// but zero cues, so players show nothing) and reports success.
+		// Crunchyroll lists a locale by URL only, so an empty or signs-only
+		// .ass it serves would otherwise slip through. Validate the content
+		// and skip the locale loudly instead of muxing an empty track.
+		ok, vErr := assHasUsableDialogue(f)
+		if vErr != nil {
+			_ = os.Remove(f)
+			return fmt.Errorf("validate subtitle %s: %w", locale, vErr)
+		}
+		if !ok {
+			d.Progress.Printf("! Subtitle track for %s has no dialogue events; skipping it so we don't mux an empty track.\n", output.TrackTitle(locale))
+			_ = os.Remove(f)
+			continue
 		}
 		subTracks = append(subTracks, mux.MediaTrack{File: f, Locale: locale})
 	}
