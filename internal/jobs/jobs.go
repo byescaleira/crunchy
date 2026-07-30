@@ -1,10 +1,14 @@
-// Package jobs runs downloads as a serialized queue of jobs, each observable
-// through a stream of progress events. The Manager runs one job at a time so the
-// Widevine keys-ordering invariant (see internal/download) is never violated by
-// two downloads of the same content racing, and so a single user's bandwidth
-// isn't subdivided. A download publishes its progress through a channelProgress
-// that adapts the download.Progress seam onto a job's event channel; the server
-// (step k) drains that channel over SSE.
+// Package jobs runs downloads as a queue of jobs, each observable through a
+// stream of progress events. The Manager runs up to N jobs concurrently (one
+// slot per episode), so a season or series download fans out into one job per
+// episode with several running in parallel. The Widevine keys-ordering
+// invariant is intra-episode (see internal/download): each Task builds its own
+// Downloader, so concurrent episodes never race on the same content. A
+// download publishes its progress through a channelProgress that adapts the
+// download.Progress seam onto a job's event channel; the server (step k)
+// drains that channel over SSE, and a multiplexed broadcast fans events out to
+// every subscriber so a whole-season page needs a single stream, not one per
+// card.
 package jobs
 
 import (
@@ -22,7 +26,7 @@ type Status string
 const (
 	StatusQueued      Status = "queued"
 	StatusDownloading Status = "downloading"
-	StatusMuxing      Status = "muxing"
+	StatusMuxing       Status = "muxing"
 	StatusDone        Status = "done"
 	StatusError       Status = "error"
 )
@@ -52,6 +56,14 @@ type Event struct {
 	Total   int
 }
 
+// EnvelopeEvent is an Event tagged with the job id it came from, for the
+// multiplexed /jobs/events stream: one broadcast carries every job's events so
+// a page with many cards opens a single EventSource instead of one per card.
+type EnvelopeEvent struct {
+	JobID string
+	Event Event
+}
+
 // phaseRange is the [base, base+span] slice of the overall 0-100 progress bar
 // that a download phase owns. The ranges telescope to 100:
 // subtitles 0-5, audio 5-35, video 35-90, mux 90-100.
@@ -79,8 +91,8 @@ func phaseBase(name string) int {
 // episodeProgress maps a raw (done, total) segment tick within the named phase
 // to an overall 0-100 episode percentage using the phase's [base, base+span]
 // slice. Indeterminate ticks (total<=0) hold at the phase base; a completed
-// phase (done>=total) reports base+span. It is the shared math behind both the
-// single-episode and batch progress adapters.
+// phase (done>=total) reports base+span. It is the shared math behind the
+// progress adapter.
 func episodeProgress(phase string, done, total int) int {
 	r, ok := phaseRanges[phase]
 	if !ok {
@@ -100,14 +112,29 @@ func episodeProgress(phase string, done, total int) int {
 	return r.base + (r.span*done)/total
 }
 
-// Job is one enqueued download. Goroutines read it via the accessor methods; only
-// the Manager's runner writes to it.
+// Job is one enqueued download. Goroutines read it via the accessor methods;
+// only the Manager's runner writes to it. The display fields (Title, ImageURL,
+// SeriesTitle, Season/EpisodeNumber, GroupID, GroupLabel) are write-once — set
+// at construction from the season-episode metadata — and read directly by the
+// web templates without a mutex.
 type Job struct {
 	ID    string
 	Label string
 
-	events chan Event
-	donec  chan struct{}
+	// Display fields populated from media.SeasonEpisode / EpisodeInfo at enqueue
+	// time so the job card can show the episode thumbnail + title + series
+	// eyebrow with no extra API calls. Read-only after construction.
+	Title         string
+	ImageURL      string
+	SeriesTitle   string
+	SeasonNumber  int
+	EpisodeNumber int
+	GroupID       string // groups episodes of one season/series for a section header
+	GroupLabel    string // header text for the group (e.g. "Frieren — Season 2")
+
+	events   chan Event
+	broadcast func(EnvelopeEvent)
+	donec   chan struct{}
 
 	mu       sync.RWMutex
 	status   Status
@@ -178,8 +205,12 @@ func (j *Job) setPhase(p string) {
 // dropped segment ticks are cosmetic, and the authoritative state stays on the
 // Job. The terminal done/error events are also published here but, because they
 // are rare, will not be dropped in practice; subscribers additionally read the
-// Job state on connect.
+// Job state on connect. Each event is also forwarded to the Manager's
+// broadcast (tagged with the job id) for the multiplexed /jobs/events stream.
 func (j *Job) emit(e Event) {
+	if j.broadcast != nil {
+		j.broadcast(EnvelopeEvent{JobID: j.ID, Event: e})
+	}
 	select {
 	case j.events <- e:
 	default:
@@ -192,32 +223,67 @@ func (j *Job) emit(e Event) {
 // A nil error marks the job done; a non-nil error marks it failed.
 type Task func(progress download.Progress) error
 
-// Manager serializes a queue of jobs. It is safe for concurrent use.
+// JobSpec is the input to Enqueue: a Task plus the write-once display fields
+// that let the job card render the episode thumbnail + title + series eyebrow.
+type JobSpec struct {
+	Label string
+	Task  Task
+
+	Title         string
+	ImageURL      string
+	SeriesTitle   string
+	SeasonNumber  int
+	EpisodeNumber int
+	GroupID       string
+	GroupLabel    string
+}
+
+// Manager runs a queue of jobs with up to maxConcurrent running at once. It is
+// safe for concurrent use. The broadcast fans every job's events out to all
+// subscribers (the multiplexed /jobs/events stream).
 type Manager struct {
 	mu    sync.Mutex
 	jobs  map[string]*Job
 	order []string
 	sem   chan struct{}
+
+	subsMu sync.Mutex
+	subs   map[chan EnvelopeEvent]struct{}
 }
 
-// NewManager creates a Manager that runs one job at a time.
-func NewManager() *Manager {
+// NewManager creates a Manager that runs up to maxConcurrent jobs at once. A
+// value below 1 is clamped to 1 (strictly serial), so a zero-value config still
+// works.
+func NewManager(maxConcurrent int) *Manager {
+	if maxConcurrent < 1 {
+		maxConcurrent = 1
+	}
 	return &Manager{
 		jobs: map[string]*Job{},
-		sem:  make(chan struct{}, 1),
+		sem:  make(chan struct{}, maxConcurrent),
+		subs: map[chan EnvelopeEvent]struct{}{},
 	}
 }
 
-// Enqueue records a job and starts a runner goroutine that waits for the
-// Manager's single slot, then runs task. The returned Job is already observable
-// (StatusQueued) before task begins.
-func (m *Manager) Enqueue(label string, task Task) *Job {
+// Enqueue records a job and starts a runner goroutine that waits for one of the
+// Manager's N slots, then runs spec.Task. The returned Job is already observable
+// (StatusQueued) before the task begins; jobs beyond the concurrency limit stay
+// queued until a slot frees.
+func (m *Manager) Enqueue(spec JobSpec) *Job {
 	j := &Job{
-		ID:     uuid.NewString(),
-		Label:  label,
-		events: make(chan Event, 256),
-		donec:  make(chan struct{}),
-		status: StatusQueued,
+		ID:           uuid.NewString(),
+		Label:        spec.Label,
+		Title:        spec.Title,
+		ImageURL:     spec.ImageURL,
+		SeriesTitle:  spec.SeriesTitle,
+		SeasonNumber: spec.SeasonNumber,
+		EpisodeNumber: spec.EpisodeNumber,
+		GroupID:      spec.GroupID,
+		GroupLabel:   spec.GroupLabel,
+		events:       make(chan Event, 256),
+		broadcast:    m.broadcast,
+		donec:        make(chan struct{}),
+		status:       StatusQueued,
 	}
 	j.emit(Event{Type: EventStatus, Status: StatusQueued})
 
@@ -226,11 +292,24 @@ func (m *Manager) Enqueue(label string, task Task) *Job {
 	m.order = append(m.order, j.ID)
 	m.mu.Unlock()
 
-	go m.run(j, task)
+	go m.run(j, spec.Task)
 	return j
 }
 
-// run is the per-job runner. It blocks on the serialization semaphore, runs the
+// EnqueueMany enqueues a group of specs (one per episode of a season/series) as
+// independent jobs. Up to N run concurrently; the rest stay queued. One
+// episode's error never affects its siblings — each job is independent, which
+// is strictly better than the old batch's skip-and-continue because a failing
+// episode no longer blocks the slot of the next.
+func (m *Manager) EnqueueMany(specs []JobSpec) []*Job {
+	out := make([]*Job, 0, len(specs))
+	for _, spec := range specs {
+		out = append(out, m.Enqueue(spec))
+	}
+	return out
+}
+
+// run is the per-job runner. It blocks on the concurrency semaphore, runs the
 // task with a channelProgress, records the terminal state, and closes the job's
 // event/done channels so subscribers can drain and exit.
 func (m *Manager) run(j *Job, task Task) {
@@ -258,115 +337,44 @@ func (m *Manager) run(j *Job, task Task) {
 	j.emit(Event{Type: EventDone, Status: StatusDone})
 }
 
-// EnqueueBatch records a parent job that runs tasks sequentially — one at a
-// time, reusing the Manager's single slot so two downloads never race (the
-// Widevine keys-ordering invariant holds across episodes, not just within one).
-// It aggregates segment progress across the sub-tasks and continues past a
-// sub-task error (skip-and-continue), recording the first error on the job but
-// still running the remaining sub-tasks. The returned parent Job is observable
-// (StatusQueued) before the runner begins; its events stream the aggregate.
-//
-// Use Enqueue for a single episode; EnqueueBatch for a season or series, where
-// each Task is one episode.
-func (m *Manager) EnqueueBatch(label string, tasks []Task) *Job {
-	j := &Job{
-		ID:     uuid.NewString(),
-		Label:  label,
-		events: make(chan Event, 256),
-		donec:  make(chan struct{}),
-		status: StatusQueued,
-	}
-	j.emit(Event{Type: EventStatus, Status: StatusQueued})
-
-	m.mu.Lock()
-	m.jobs[j.ID] = j
-	m.order = append(m.order, j.ID)
-	m.mu.Unlock()
-
-	go m.runBatch(j, tasks)
-	return j
+// Subscribe registers a subscriber to the multiplexed event broadcast and
+// returns the event channel (receive-only), a snapshot of the current jobs in
+// enqueue order, and a cancel func the handler must defer so broadcast never
+// sends into a closed channel. The handler sends the snapshot first (so a late
+// subscriber catches up to the current state), then ranges over the channel
+// for live events.
+func (m *Manager) Subscribe() (<-chan EnvelopeEvent, []*Job, func()) {
+	ch := make(chan EnvelopeEvent, 256)
+	m.subsMu.Lock()
+	m.subs[ch] = struct{}{}
+	m.subsMu.Unlock()
+	return ch, m.List(), func() { m.unsubscribe(ch) }
 }
 
-// runBatch is the batch runner. It blocks on the serialization semaphore (so a
-// batch is run one sub-task at a time and never concurrently with another job),
-// runs each task with a batchProgress that aggregates segment ticks across the
-// sub-tasks, continues past a task error recording the first one, and ends the
-// parent in StatusError (if any sub-task failed) or StatusDone.
-func (m *Manager) runBatch(j *Job, tasks []Task) {
-	m.sem <- struct{}{}
-	defer func() {
-		<-m.sem
-		close(j.events)
-		close(j.donec)
-	}()
+// unsubscribe removes ch from the broadcast set and closes it. Removing ch from
+// the set before closing guarantees no in-flight broadcast sends into it: the
+// broadcaster holds subsMu while sending, and unsubscribe holds subsMu while
+// deleting, so the two never overlap on the same channel.
+func (m *Manager) unsubscribe(ch chan EnvelopeEvent) {
+	m.subsMu.Lock()
+	delete(m.subs, ch)
+	m.subsMu.Unlock()
+	close(ch)
+}
 
-	j.set(StatusDownloading, "")
-	j.emit(Event{Type: EventStatus, Status: StatusDownloading})
-
-	bp := &batchProgress{job: j, episodeCount: len(tasks)}
-	var firstErr string
-	anyErr := false
-	for _, task := range tasks {
-		if err := task(bp); err != nil {
-			anyErr = true
-			if firstErr == "" {
-				firstErr = err.Error()
-			}
+// broadcast fans ev out to every subscriber. Sends are non-blocking so a slow
+// subscriber never stalls a worker; a full subscriber channel drops cosmetic
+// segment ticks (the authoritative state stays on the Job and is re-snapshotted
+// on reconnect).
+func (m *Manager) broadcast(ev EnvelopeEvent) {
+	m.subsMu.Lock()
+	defer m.subsMu.Unlock()
+	for ch := range m.subs {
+		select {
+		case ch <- ev:
+		default:
 		}
-		// Advance to the next episode so the next sub-task's phase/segment ticks
-		// continue the bar monotonically across the batch (each episode owns a
-		// 0-100 slice of the overall episodeCount*100 bar).
-		bp.episodeIndex++
-		bp.phase = ""
 	}
-
-	if anyErr {
-		j.set(StatusError, firstErr)
-		j.emit(Event{Type: EventError, Message: firstErr})
-		j.emit(Event{Type: EventDone, Status: StatusError})
-		return
-	}
-	// Emit a terminal status event before the done event so late subscribers
-	// catch the transition (see run).
-	j.set(StatusDone, "")
-	j.emit(Event{Type: EventStatus, Status: StatusDone})
-	j.emit(Event{Type: EventDone, Status: StatusDone})
-}
-
-// batchProgress adapts a parent batch Job onto the download.Progress seam,
-// mapping each episode's phase-weighted progress onto a 0-100 slice of an
-// overall episodeCount*100 bar so the aggregate climbs monotonically 0-100
-// across the whole batch (season/series). episodeIndex is the number of
-// completed sub-tasks; the active episode owns slice
-// [episodeIndex*100, (episodeIndex+1)*100). Printf passes through as a message
-// event so each episode's progress lines still stream.
-type batchProgress struct {
-	job          *Job
-	episodeCount int
-	episodeIndex int
-	phase        string
-}
-
-func (b *batchProgress) Printf(format string, args ...any) {
-	b.job.emit(Event{Type: EventMessage, Message: fmt.Sprintf(format, args...)})
-}
-
-func (b *batchProgress) Phase(name string) {
-	b.phase = name
-	b.job.setPhase(name)
-	b.job.emit(Event{Type: EventPhase, Phase: name})
-	aggDone := b.episodeIndex*100 + phaseBase(name)
-	aggTotal := b.episodeCount * 100
-	b.job.setSegment(aggDone, aggTotal)
-	b.job.emit(Event{Type: EventSegment, Done: aggDone, Total: aggTotal})
-}
-
-func (b *batchProgress) Segment(done, total int) {
-	epPct := episodeProgress(b.phase, done, total)
-	aggDone := b.episodeIndex*100 + epPct
-	aggTotal := b.episodeCount * 100
-	b.job.setSegment(aggDone, aggTotal)
-	b.job.emit(Event{Type: EventSegment, Done: aggDone, Total: aggTotal})
 }
 
 // Get returns the job with id, or (nil, false) if it does not exist.

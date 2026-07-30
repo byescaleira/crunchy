@@ -7,13 +7,16 @@ import (
 	"crunchyroll-downloader/internal/media"
 )
 
-// SettingsPage renders the etp-rt settings card. saved indicates a verified
-// token is on file; errText shows a token/transport error from the last save.
-templ SettingsPage(saved bool, errText string) {
+// SettingsPage renders the etp-rt settings card and a Downloads card for the
+// max-concurrent-downloads preference. saved indicates a verified token is on
+// file; errText shows a token/transport error from the last save. maxConcurrent
+// is the persisted concurrency cap (shown in the Downloads card; it takes effect
+// after a restart).
+templ SettingsPage(saved bool, errText string, maxConcurrent int) {
 	@Layout("Settings", "settings") {
-		<div class="max-w-xl">
+		<div class="max-w-xl flex flex-col gap-4">
 			@eyebrow("Settings")
-			<div class="card bg-base-100 border border-base-300 rounded-box mt-2">
+			<div class="card bg-base-100 border border-base-300 rounded-box">
 				<div class="card-body gap-4">
 					<h2 class="font-display uppercase text-xl">etp_rt token</h2>
 					<p class="text-sm text-base-content/70">
@@ -39,6 +42,32 @@ templ SettingsPage(saved bool, errText string) {
 							@Alert("success", "Token saved and verified.")
 						}
 					</div>
+				</div>
+			</div>
+
+			<div class="card bg-base-100 border border-base-300 rounded-box">
+				<div class="card-body gap-4">
+					<h2 class="font-display uppercase text-xl">Downloads</h2>
+					<p class="text-sm text-base-content/70">
+						How many episodes to download at once. A whole season fans out into one job per
+						episode; this caps how many run in parallel. Higher is faster but risks
+						rate-limiting. Takes effect after a server restart.
+					</p>
+					<form hx-post="/settings/downloads" hx-target="#downloads-result" class="flex items-end gap-3">
+						<label class="form-control">
+							<span class="label-text mb-1 font-mono text-xs uppercase tracking-wider">Concurrent downloads</span>
+							<input
+								type="number"
+								name="maxConcurrent"
+								min="1"
+								max="8"
+								value={ fmt.Sprintf("%d", maxConcurrent) }
+								class="input input-bordered rounded-field font-mono w-24"
+							/>
+						</label>
+						<button class="btn btn-primary rounded-field">Save</button>
+					</form>
+					<div id="downloads-result"></div>
 				</div>
 			</div>
 		</div>
@@ -336,10 +365,10 @@ templ DownloadForm(opts DownloadFormOpts, errs map[string]string) {
 	</form>
 }
 
-// JobsPage renders the jobs panel: a "Now downloading" transmission log with a
-// refresh button, plus the current job cards. The script wires each card's SSE
-// stream to its progress bar, status badge, status dot (the pulsing signature),
-// and error line.
+// JobsPage renders the jobs panel: a "Now downloading" header with a refresh
+// button, plus the current job cards. The live updates are driven by the single
+// multiplexed /jobs/events stream wired in Layout (one EventSource for the whole
+// page), so this page carries no per-card script.
 templ JobsPage(js []*jobs.Job) {
 	@Layout("Jobs", "jobs") {
 		<div class="flex flex-col gap-3">
@@ -351,150 +380,52 @@ templ JobsPage(js []*jobs.Job) {
 				@JobsList(js)
 			</div>
 		</div>
-		<script>
-			(function () {
-				var dotColor = {
-					queued: "bg-base-content/30",
-					downloading: "bg-primary",
-					muxing: "bg-primary",
-					done: "bg-success",
-					error: "bg-error"
-				};
-				var badgeClass = {
-					queued: "badge-ghost",
-					downloading: "badge-warning",
-					muxing: "badge-info",
-					done: "badge-success",
-					error: "badge-error"
-				};
-				var PHASES = ["subtitles", "audio", "video", "mux"];
-				var PHASE_LABELS = { subtitles: "Subtitles", audio: "Audio", video: "Video", mux: "Muxing" };
-				var CHIP_BASE = "inline-flex items-center px-1.5 py-0.5 rounded-field font-mono text-[10px] uppercase tracking-wider border transition-colors ";
-				var CHIP_DONE = "border-primary/40 text-primary bg-primary/10";
-				var CHIP_ACTIVE = "border-primary text-primary-content bg-primary crdl-dot";
-				var CHIP_PENDING = "border-base-300 text-base-content/40";
-
-				function chipClass(state) {
-					if (state === "done") { return CHIP_BASE + CHIP_DONE; }
-					if (state === "active") { return CHIP_BASE + CHIP_ACTIVE; }
-					return CHIP_BASE + CHIP_PENDING;
-				}
-
-				// renderRail lights the phase rail up to `phase`: completed chips
-				// done, the active chip pulsing, the rest pending.
-				function renderRail(id, phase) {
-					var idx = PHASES.indexOf(phase);
-					for (var i = 0; i < PHASES.length; i++) {
-						var chip = document.getElementById("job-" + id + "-chip-" + PHASES[i]);
-						if (!chip) { continue; }
-						var state = "pending";
-						if (idx >= 0) {
-							if (i < idx) { state = "done"; }
-							else if (i === idx) { state = "active"; }
-						}
-						chip.className = chipClass(state);
-					}
-				}
-
-				// renderRailDone marks every chip completed (terminal success).
-				function renderRailDone(id) {
-					for (var i = 0; i < PHASES.length; i++) {
-						var chip = document.getElementById("job-" + id + "-chip-" + PHASES[i]);
-						if (chip) { chip.className = chipClass("done"); }
-					}
-				}
-
-				function setPct(id, pct) {
-					var box = document.getElementById("job-" + id + "-progress");
-					var bar = box && box.querySelector("progress");
-					if (bar) { bar.value = pct; }
-					var span = document.getElementById("job-" + id + "-pct");
-					if (span) { span.textContent = pct + "%"; }
-				}
-
-				// applyStatus updates the badge + dot (+ error line) for a status
-				// transition. Shared by the status and done listeners so the
-				// terminal "done" / "error" state always reaches the badge.
-				function applyStatus(id, status, message) {
-					var badge = document.getElementById("job-" + id + "-status");
-					if (badge) {
-						badge.textContent = status;
-						badge.className = "badge " + (badgeClass[status] || "badge-ghost") + " badge-sm font-mono shrink-0";
-					}
-					var dot = document.getElementById("job-" + id + "-dot");
-					if (dot) {
-						dot.className = "inline-block h-2 w-2 rounded-full shrink-0 " + (dotColor[status] || "bg-base-content/30") + ((status === "downloading" || status === "muxing") ? " crdl-dot" : "");
-					}
-					if (status === "error") {
-						var err = document.getElementById("job-" + id + "-error");
-						if (err && message) {
-							err.innerHTML = '<div class="text-xs text-error font-mono break-all"></div>';
-							err.firstChild.textContent = message;
-						}
-					}
-				}
-
-				document.querySelectorAll("[data-job-sse]").forEach(function (card) {
-					var id = card.getAttribute("data-job-sse");
-					var finished = false;
-					var phase = "";
-					var es = new EventSource("/jobs/" + id + "/events");
-
-					es.addEventListener("phase", function (e) {
-						var d = JSON.parse(e.data);
-						phase = d.phase || "";
-						var label = document.getElementById("job-" + id + "-phase");
-						if (label) { label.textContent = PHASE_LABELS[phase] || phase; }
-						renderRail(id, phase);
-					});
-
-					es.addEventListener("segment", function (e) {
-						var d = JSON.parse(e.data);
-						var pct = d.total > 0 ? Math.round((d.done * 100) / d.total) : 0;
-						setPct(id, pct);
-						if (phase) { renderRail(id, phase); }
-					});
-
-					es.addEventListener("status", function (e) {
-						var d = JSON.parse(e.data);
-						applyStatus(id, d.status, d.message);
-					});
-
-					es.addEventListener("done", function (e) {
-						var d = JSON.parse(e.data);
-						finished = true;
-						applyStatus(id, d.status, d.message);
-						setPct(id, 100);
-						// A finished job lights the whole rail; a failed one leaves
-						// the rail showing how far it got (the active phase stays
-						// lit, the rest pending).
-						if (d.status !== "error") {
-							renderRailDone(id);
-						}
-						var label = document.getElementById("job-" + id + "-phase");
-						if (label) { label.textContent = d.status === "error" ? "Failed" : "Done"; }
-						es.close();
-					});
-
-					// A transport blip mid-download should not strand the card: if
-					// the job hasn't finished, let EventSource auto-reconnect. Once
-					// finished, swallow the connection-close error.
-					es.addEventListener("error", function () {
-						if (finished) { es.close(); }
-					});
-				});
-			})();
-		</script>
 	}
 }
 
 // JobsList is the HTMX partial swapped into #jobs-list (and #download-queue) by
-// /jobs/list. Empty state is an invitation to act.
+// /jobs/list. Jobs of one season/series share a GroupID (enqueued contiguously),
+// so a section header (the GroupLabel) is rendered whenever the GroupID changes
+// between consecutive jobs. Empty state is an invitation to act.
 templ JobsList(js []*jobs.Job) {
 	if len(js) == 0 {
 		<p class="text-sm text-base-content/40 font-mono py-3">No jobs yet — start a download to see it here.</p>
 	}
-	for _, j := range js {
-		@jobCard(j)
+	for _, row := range jobsRows(js) {
+		if row.Group != "" {
+			<div class="flex items-center gap-2 pt-3 first:pt-0.5">
+				<span class="font-mono text-xs uppercase tracking-widest text-primary/80">{ row.Group }</span>
+			</div>
+		}
+		if row.Job != nil {
+			@jobCard(row.Job)
+		}
 	}
+}
+
+// jobRow is one row in the jobs list: either a group header (Group != "") or a
+// job card (Job != nil).
+type jobRow struct {
+	Group string // group label to render as a section header; empty if this is a job card
+	Job   *jobs.Job
+}
+
+// jobsRows flattens the job list into render rows, inserting a group header
+// whenever the GroupID changes between consecutive jobs. Enqueue order keeps a
+// season/series's episodes contiguous, so this yields one header per season.
+func jobsRows(js []*jobs.Job) []jobRow {
+	var rows []jobRow
+	prev := ""
+	for _, j := range js {
+		if j.GroupID != "" && j.GroupID != prev {
+			prev = j.GroupID
+			label := j.GroupLabel
+			if label == "" {
+				label = "Downloads"
+			}
+			rows = append(rows, jobRow{Group: label})
+		}
+		rows = append(rows, jobRow{Job: j})
+	}
+	return rows
 }

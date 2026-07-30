@@ -9,14 +9,19 @@ import (
 	"crunchyroll-downloader/internal/download"
 )
 
+// spec is a shorthand to build a JobSpec with a Task.
+func spec(label string, task Task) JobSpec {
+	return JobSpec{Label: label, Task: task}
+}
+
 // TestManager_EnqueueComplete drives a job through its full lifecycle and
 // checks that the channelProgress republishes the download.Progress calls as
 // events, the segment counts land on the Job, and the job ends StatusDone with
 // its event/done channels closed.
 func TestManager_EnqueueComplete(t *testing.T) {
-	m := NewManager()
+	m := NewManager(1)
 
-	j := m.Enqueue("S01E01", func(p download.Progress) error {
+	j := m.Enqueue(spec("S01E01", func(p download.Progress) error {
 		p.Printf("Downloading %s audio...\n", "ja-JP")
 		p.Phase("audio")
 		p.Segment(1, 3)
@@ -24,7 +29,7 @@ func TestManager_EnqueueComplete(t *testing.T) {
 		p.Segment(3, 3)
 		p.Printf("Cleaning up...")
 		return nil
-	})
+	}))
 
 	<-j.Done()
 
@@ -74,10 +79,10 @@ func TestManager_EnqueueComplete(t *testing.T) {
 // TestManager_ErrorTerminal enqueues a failing task and asserts the job reaches
 // StatusError with the error message surfaced.
 func TestManager_ErrorTerminal(t *testing.T) {
-	m := NewManager()
-	j := m.Enqueue("bad", func(p download.Progress) error {
+	m := NewManager(1)
+	j := m.Enqueue(spec("bad", func(p download.Progress) error {
 		return errBoom
-	})
+	}))
 	<-j.Done()
 
 	if got := j.Status(); got != StatusError {
@@ -88,17 +93,18 @@ func TestManager_ErrorTerminal(t *testing.T) {
 	}
 }
 
-// TestManager_Serializes enqueues several jobs and asserts the Manager runs them
-// one at a time — the property that protects the Widevine keys-ordering
-// invariant and keeps a single user's bandwidth undivided.
-func TestManager_Serializes(t *testing.T) {
-	m := NewManager()
+// TestEnqueueMany_RunsUpToNConcurrent enqueues more jobs than the concurrency
+// limit and asserts the Manager never exceeds it — the property that keeps a
+// single user's bandwidth undivided and the rate-limit footprint modest.
+func TestEnqueueMany_RunsUpToNConcurrent(t *testing.T) {
+	const n = 5
+	m := NewManager(3)
 	var concurrent atomic.Int32
 	var maxConcurrent atomic.Int32
 
-	const n = 5
+	specs := make([]JobSpec, 0, n)
 	for i := 0; i < n; i++ {
-		m.Enqueue("job", func(p download.Progress) error {
+		specs = append(specs, spec("job", func(p download.Progress) error {
 			cur := concurrent.Add(1)
 			for {
 				max := maxConcurrent.Load()
@@ -109,26 +115,31 @@ func TestManager_Serializes(t *testing.T) {
 			time.Sleep(5 * time.Millisecond)
 			concurrent.Add(-1)
 			return nil
-		})
+		}))
 	}
-
+	for _, j := range m.EnqueueMany(specs) {
+		defer func(j *Job) { <-j.Done() }(j)
+	}
 	for _, j := range m.List() {
 		<-j.Done()
 	}
 
-	if got := maxConcurrent.Load(); got != 1 {
-		t.Errorf("max concurrent jobs = %d, want 1", got)
+	if got := maxConcurrent.Load(); got > 3 {
+		t.Errorf("max concurrent jobs = %d, want <= 3", got)
+	}
+	if got := len(m.List()); got != n {
+		t.Errorf("List() has %d jobs, want %d", got, n)
 	}
 }
 
 // TestManager_GetList checks lookup and enqueue-order preservation.
 func TestManager_GetList(t *testing.T) {
-	m := NewManager()
+	m := NewManager(2)
 	var wg sync.WaitGroup
 	ids := make([]string, 3)
 	for i := range ids {
 		wg.Add(1)
-		j := m.Enqueue("label", func(p download.Progress) error { wg.Done(); return nil })
+		j := m.Enqueue(spec("label", func(p download.Progress) error { wg.Done(); return nil }))
 		ids[i] = j.ID
 	}
 	wg.Wait()
@@ -150,100 +161,106 @@ func TestManager_GetList(t *testing.T) {
 	}
 }
 
-// TestEnqueueBatch_OrderedAggregateContinue pins the batch contract: sub-tasks
-// run sequentially in order, segment progress aggregates across sub-tasks, a
-// failing sub-task is skipped-and-continued (the rest still run), the first
-// error is recorded, and the parent still reaches a terminal state.
-func TestEnqueueBatch_OrderedAggregateContinue(t *testing.T) {
-	m := NewManager()
-
-	var order []int
-	var mu sync.Mutex
-	record := func(n int) {
-		mu.Lock()
-		order = append(order, n)
-		mu.Unlock()
-	}
-
-	tasks := []Task{
-		// sub-task 1: succeeds. Phase("audio") → episode 0 base 5; Segment(1,2)
-		// → 5 + 30/2 = 20.
-		func(p download.Progress) error {
-			record(1)
-			p.Phase("audio")
-			p.Segment(1, 2)
-			return nil
-		},
-		// sub-task 2: fails. Phase("audio") → episode 1 base 100+5=105;
-		// Segment(2,2) → 100 + 35 = 135.
-		func(p download.Progress) error {
-			record(2)
-			p.Phase("audio")
-			p.Segment(2, 2)
-			return errBoom
-		},
-		// sub-task 3: succeeds, reports no segments — still runs despite sub-task 2's error.
-		func(p download.Progress) error {
-			record(3)
-			return nil
-		},
-	}
-
-	j := m.EnqueueBatch("Season 1", tasks)
+// TestEnqueue_PopulatesJobMetadata asserts the display fields on a JobSpec are
+// carried onto the Job verbatim so the card can render image + title + eyebrow
+// with no extra API calls.
+func TestEnqueue_PopulatesJobMetadata(t *testing.T) {
+	m := NewManager(1)
+	j := m.Enqueue(JobSpec{
+		Label:         "S02E05 — The Fold",
+		Task:          func(download.Progress) error { return nil },
+		Title:         "The Fold",
+		ImageURL:      "https://img/ep.jpg",
+		SeriesTitle:   "Frieren",
+		SeasonNumber:  2,
+		EpisodeNumber: 5,
+		GroupID:       "season-2",
+		GroupLabel:    "Frieren — Season 2",
+	})
 	<-j.Done()
 
-	// All three sub-tasks ran, in order, despite the middle failure.
-	mu.Lock()
-	wantOrder := []int{1, 2, 3}
-	if len(order) != len(wantOrder) {
-		t.Errorf("sub-task order = %v, want %v", order, wantOrder)
-	} else {
-		for i, want := range wantOrder {
-			if order[i] != want {
-				t.Errorf("order[%d] = %d, want %d (full: %v)", i, order[i], want, order)
-			}
-		}
+	if j.Title != "The Fold" || j.ImageURL != "https://img/ep.jpg" || j.SeriesTitle != "Frieren" {
+		t.Errorf("display fields not set: %+v", j)
 	}
-	mu.Unlock()
-
-	// First error recorded; parent ends in error.
-	if got := j.Status(); got != StatusError {
-		t.Fatalf("status = %q, want %q", got, StatusError)
+	if j.SeasonNumber != 2 || j.EpisodeNumber != 5 {
+		t.Errorf("season/episode numbers not set: %+v", j)
 	}
-	if j.Error() != errBoom.Error() {
-		t.Errorf("Error = %q, want %q", j.Error(), errBoom.Error())
-	}
-
-	// Phase-weighted aggregate across 3 episodes (bar total = 300). The last
-	// reported segment is (135, 300).
-	done, total := j.Segment()
-	if done != 135 || total != 300 {
-		t.Errorf("aggregate Segment = (%d,%d), want (135,300)", done, total)
-	}
-
-	// The segment events climb monotonically across the batch (no per-episode
-	// drop): 5 → 20 → 105 → 135, all over a 300 total.
-	var segs []Event
-	for e := range j.Events() {
-		if e.Type == EventSegment {
-			segs = append(segs, e)
-		}
-	}
-	wantSegs := []int{5, 20, 105, 135}
-	if len(segs) != len(wantSegs) {
-		t.Fatalf("expected %d segment events, got %d: %+v", len(wantSegs), len(segs), segs)
-	}
-	for i, want := range wantSegs {
-		if segs[i].Done != want || segs[i].Total != 300 {
-			t.Errorf("segment[%d] = (%d,%d), want (%d,300)", i, segs[i].Done, segs[i].Total, want)
-		}
+	if j.GroupID != "season-2" || j.GroupLabel != "Frieren — Season 2" {
+		t.Errorf("group fields not set: %+v", j)
 	}
 }
 
-// TestEpisodeProgress covers the phase-weighting math that both progress
-// adapters share: each phase owns a [base, base+span] slice of the 0-100 bar,
-// indeterminate ticks hold at the base, a completed phase reports base+span,
-// and an unknown phase reports 0.
+// TestEnqueueMany_IndependentErrors asserts that one failing job does not affect
+// its siblings — each job is independent (strictly better than the old batch's
+// skip-and-continue, because a failing episode no longer occupies the slot of
+// the next). The failing job ends StatusError; the others end StatusDone.
+func TestEnqueueMany_IndependentErrors(t *testing.T) {
+	m := NewManager(3)
+	specs := []JobSpec{
+		spec("ok1", func(download.Progress) error { return nil }),
+		spec("boom", func(download.Progress) error { return errBoom }),
+		spec("ok2", func(download.Progress) error { return nil }),
+	}
+	js := m.EnqueueMany(specs)
+	for _, j := range js {
+		<-j.Done()
+	}
+	if js[0].Status() != StatusDone || js[2].Status() != StatusDone {
+		t.Errorf("siblings should be done: %q %q", js[0].Status(), js[2].Status())
+	}
+	if js[1].Status() != StatusError {
+		t.Errorf("failing job should be error, got %q", js[1].Status())
+	}
+	if js[1].Error() != errBoom.Error() {
+		t.Errorf("failing job error = %q, want %q", js[1].Error(), errBoom.Error())
+	}
+}
+
+// TestSubscribe_SnapshotAndBroadcast subscribes before any job exists (empty
+// snapshot), then enqueues a job and asserts its live phase + done envelopes
+// arrive over the broadcast channel tagged with the job id.
+func TestSubscribe_SnapshotAndBroadcast(t *testing.T) {
+	m := NewManager(2)
+	ch, snapshot, cancel := m.Subscribe()
+	defer cancel()
+	if len(snapshot) != 0 {
+		t.Fatalf("snapshot should be empty before any job, got %d", len(snapshot))
+	}
+
+	j := m.Enqueue(spec("ep", func(p download.Progress) error {
+		p.Phase("audio")
+		return nil
+	}))
+
+	var sawPhase, sawDone bool
+	timeout := time.After(time.Second)
+	for !sawDone {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				t.Fatal("channel closed before done")
+			}
+			if ev.JobID != j.ID {
+				t.Errorf("envelope job id = %q, want %q", ev.JobID, j.ID)
+			}
+			if ev.Event.Type == EventPhase {
+				sawPhase = true
+			}
+			if ev.Event.Type == EventDone {
+				sawDone = true
+			}
+		case <-timeout:
+			t.Fatal("timed out waiting for the done envelope")
+		}
+	}
+	if !sawPhase {
+		t.Error("did not see the phase envelope")
+	}
+}
+
+// TestEpisodeProgress covers the phase-weighting math: each phase owns a
+// [base, base+span] slice of the 0-100 bar, indeterminate ticks hold at the
+// base, a completed phase reports base+span, and an unknown phase reports 0.
 func TestEpisodeProgress(t *testing.T) {
 	cases := []struct {
 		phase string
@@ -251,16 +268,16 @@ func TestEpisodeProgress(t *testing.T) {
 		total int
 		want  int
 	}{
-		{"subtitles", 0, 0, 0},   // indeterminate → base 0
-		{"subtitles", 1, 2, 2},   // 0 + 5/2 = 2
-		{"audio", 0, 3, 5},       // base 5
-		{"audio", 1, 2, 20},      // 5 + 30/2 = 20
-		{"audio", 2, 2, 35},      // completed → 5 + 30 = 35
-		{"video", 0, 0, 35},      // indeterminate → base 35
-		{"video", 1, 2, 62},      // 35 + 55/2 = 62
-		{"video", 2, 2, 90},       // completed → 35 + 55 = 90
-		{"mux", 0, 0, 90},        // base 90
-		{"", 5, 5, 0},            // unknown phase → 0
+		{"subtitles", 0, 0, 0},  // indeterminate → base 0
+		{"subtitles", 1, 2, 2},  // 0 + 5/2 = 2
+		{"audio", 0, 3, 5},      // base 5
+		{"audio", 1, 2, 20},     // 5 + 30/2 = 20
+		{"audio", 2, 2, 35},     // completed → 5 + 30 = 35
+		{"video", 0, 0, 35},     // indeterminate → base 35
+		{"video", 1, 2, 62},     // 35 + 55/2 = 62
+		{"video", 2, 2, 90},     // completed → 35 + 55 = 90
+		{"mux", 0, 0, 90},       // base 90
+		{"", 5, 5, 0},           // unknown phase → 0
 	}
 	for _, c := range cases {
 		if got := episodeProgress(c.phase, c.done, c.total); got != c.want {

@@ -57,9 +57,14 @@ type DownloadOpts struct {
 // config is the persisted (0600) session config. etpRt is sensitive. The
 // Last* fields remember the user's last download-options choices so the modal
 // pre-fills them next time instead of resetting to defaults every download.
+// MaxConcurrent caps how many episodes download at once (default 3); it is read
+// only at startup to size the jobs.Manager, so changing it in Settings needs a
+// restart to take effect.
 type config struct {
 	EtpRt     string `json:"etpRt"`
 	OutputDir string `json:"outputDir"`
+
+	MaxConcurrent int `json:"maxConcurrent"`
 
 	LastVideoQuality string   `json:"lastVideoQuality"`
 	LastAudioQuality string   `json:"lastAudioQuality"`
@@ -80,8 +85,8 @@ type Server struct {
 	mu               sync.RWMutex
 	api              crunchyAPI
 	buildTask        func(contentId string, opts DownloadOpts) jobs.Task
-	buildSeasonTasks func(seasonID string, opts DownloadOpts) ([]jobs.Task, string, error)
-	buildSeriesTasks func(seriesID string, opts DownloadOpts) ([]jobs.Task, string, error)
+	buildSeasonTasks func(seasonID string, opts DownloadOpts) ([]jobs.JobSpec, error)
+	buildSeriesTasks func(seriesID string, opts DownloadOpts) ([]jobs.JobSpec, error)
 	outputDir        string
 	cfg              config // single source of truth for persisted prefs (mu-guarded)
 }
@@ -95,7 +100,6 @@ func New(dataDir, etpRt string, debug bool) (*Server, error) {
 		return nil, fmt.Errorf("create data dir: %w", err)
 	}
 	s := &Server{
-		manager: jobs.NewManager(),
 		dataDir: dataDir,
 		cfgPath: filepath.Join(dataDir, "config.json"),
 		debug:   debug,
@@ -106,6 +110,10 @@ func New(dataDir, etpRt string, debug bool) (*Server, error) {
 	// the flag. A missing file is not an error — cfg stays zero-valued and the
 	// accessors fall back to defaults.
 	saved, _ := s.loadConfig()
+	if saved.MaxConcurrent < 1 {
+		saved.MaxConcurrent = 3
+	}
+	s.manager = jobs.NewManager(saved.MaxConcurrent)
 	s.mu.Lock()
 	s.cfg = saved
 	s.outputDir = saved.OutputDir
@@ -219,55 +227,71 @@ func makeBuildTask(client *crunchy.Client, debug bool, outputDir string) func(st
 	}
 }
 
-// makeSeasonTaskBuilder returns a factory that discovers a season's episodes and
-// builds one jobs.Task per episode (each running the full download.Episode
-// pipeline), plus a parent label. The tasks run sequentially inside an
-// EnqueueBatch parent so the Widevine keys-ordering invariant holds across
-// episodes and progress aggregates across them.
-func makeSeasonTaskBuilder(client *crunchy.Client, debug bool) func(string, DownloadOpts) ([]jobs.Task, string, error) {
-	return func(seasonID string, opts DownloadOpts) ([]jobs.Task, string, error) {
+// makeSeasonTaskBuilder returns a factory that discovers a season's episodes
+// and builds one jobs.JobSpec per episode (each carrying the display fields from
+// the season-episode metadata so the job card shows the thumbnail + title +
+// series eyebrow with no extra API calls). Episodes of the season share a
+// GroupID/GroupLabel so the jobs list renders them under one section header.
+func makeSeasonTaskBuilder(client *crunchy.Client, debug bool) func(string, DownloadOpts) ([]jobs.JobSpec, error) {
+	return func(seasonID string, opts DownloadOpts) ([]jobs.JobSpec, error) {
 		episodes, err := client.GetSeasonEpisodes(seasonID, "ja-JP", "en-US")
 		if err != nil {
-			return nil, "", fmt.Errorf("list season episodes: %w", err)
+			return nil, fmt.Errorf("list season episodes: %w", err)
 		}
-		tasks := make([]jobs.Task, 0, len(episodes))
+		groupLabel := seasonLabel(episodes)
+		specs := make([]jobs.JobSpec, 0, len(episodes))
 		for _, ep := range episodes {
-			tasks = append(tasks, seasonEpisodeTask(client, debug, ep, opts))
+			specs = append(specs, seasonEpisodeSpec(client, debug, ep, opts, seasonID, groupLabel))
 		}
-		return tasks, seasonLabel(episodes), nil
+		return specs, nil
 	}
 }
 
 // makeSeriesTaskBuilder returns a factory that discovers every season of a
-// series, then every episode in each season, and builds one jobs.Task per
-// episode (flattened across seasons), plus a parent label.
-func makeSeriesTaskBuilder(client *crunchy.Client, debug bool) func(string, DownloadOpts) ([]jobs.Task, string, error) {
-	return func(seriesID string, opts DownloadOpts) ([]jobs.Task, string, error) {
+// series, then every episode in each season, and builds one jobs.JobSpec per
+// episode (flattened across seasons). Episodes group per-season (GroupID = the
+// season id) so the jobs list renders a section header per season.
+func makeSeriesTaskBuilder(client *crunchy.Client, debug bool) func(string, DownloadOpts) ([]jobs.JobSpec, error) {
+	return func(seriesID string, opts DownloadOpts) ([]jobs.JobSpec, error) {
 		seasons, err := client.GetSeasons(seriesID, "ja-JP", "en-US")
 		if err != nil {
-			return nil, "", fmt.Errorf("list seasons: %w", err)
+			return nil, fmt.Errorf("list seasons: %w", err)
 		}
-		var tasks []jobs.Task
-		var firstEpisode media.SeasonEpisode
+		var specs []jobs.JobSpec
 		for _, s := range seasons {
 			episodes, err := client.GetSeasonEpisodes(s.ID, "ja-JP", "en-US")
 			if err != nil {
-				return nil, "", fmt.Errorf("list season %v episodes: %w", s.SeasonNumber, err)
+				return nil, fmt.Errorf("list season %v episodes: %w", s.SeasonNumber, err)
 			}
+			groupLabel := seasonLabel(episodes)
 			for _, ep := range episodes {
-				if firstEpisode.SeriesTitle == "" {
-					firstEpisode = ep
-				}
-				tasks = append(tasks, seasonEpisodeTask(client, debug, ep, opts))
+				specs = append(specs, seasonEpisodeSpec(client, debug, ep, opts, s.ID, groupLabel))
 			}
 		}
-		return tasks, seriesLabel(seriesID, firstEpisode, client), nil
+		return specs, nil
+	}
+}
+
+// seasonEpisodeSpec builds one per-episode JobSpec from a season-episode list
+// entry. The EpisodeInfo is built from the list entry (which already carries the
+// W1 rich metadata), so no per-episode GetEpisodeInfo round-trip is needed. The
+// display fields (Title/ImageURL/SeriesTitle/Season/Episode) come straight off
+// the list entry; groupID/groupLabel tie the episode to its season section.
+func seasonEpisodeSpec(client *crunchy.Client, debug bool, ep media.SeasonEpisode, opts DownloadOpts, groupID, groupLabel string) jobs.JobSpec {
+	return jobs.JobSpec{
+		Label:         fmt.Sprintf("S%02dE%02d — %s", ep.SeasonNumber, ep.EpisodeNumber, ep.Title),
+		Title:         ep.Title,
+		ImageURL:      bestThumb(ep.Images.Thumbnail),
+		SeriesTitle:   ep.SeriesTitle,
+		SeasonNumber:  ep.SeasonNumber,
+		EpisodeNumber: ep.EpisodeNumber,
+		GroupID:       groupID,
+		GroupLabel:    groupLabel,
+		Task:          seasonEpisodeTask(client, debug, ep, opts),
 	}
 }
 
 // seasonEpisodeTask builds one per-episode Task from a season-episode list entry.
-// The EpisodeInfo is built from the list entry (which already carries the W1
-// rich metadata), so no per-episode GetEpisodeInfo round-trip is needed.
 func seasonEpisodeTask(client *crunchy.Client, debug bool, ep media.SeasonEpisode, opts DownloadOpts) jobs.Task {
 	return func(p download.Progress) error {
 		d := &download.Downloader{
@@ -285,8 +309,18 @@ func seasonEpisodeTask(client *crunchy.Client, debug bool, ep media.SeasonEpisod
 	}
 }
 
-// seasonLabel returns a parent label for a season batch, derived from the first
-// episode's series/season titles.
+// bestThumb returns the highest-resolution episode thumbnail URL from a CMS
+// image collection, or "" if there is no art. It reuses media.BestImage so the
+// job card and the episode grid pick the same variant.
+func bestThumb(imgs [][]media.Image) string {
+	if img, ok := media.BestImage(imgs); ok {
+		return img.Source
+	}
+	return ""
+}
+
+// seasonLabel returns a section-header label for a season, derived from the
+// first episode's series/season titles.
 func seasonLabel(episodes []media.SeasonEpisode) string {
 	if len(episodes) == 0 {
 		return "Season"
@@ -298,23 +332,12 @@ func seasonLabel(episodes []media.SeasonEpisode) string {
 	return fmt.Sprintf("Season %v", ep.SeasonNumber)
 }
 
-// seriesLabel returns a parent label for a series batch, preferring the series
-// title from GetSeries, then the first episode's SeriesTitle, then the id.
-func seriesLabel(seriesID string, first media.SeasonEpisode, client *crunchy.Client) string {
-	if series, err := client.GetSeries(seriesID); err == nil && series.Title != "" {
-		return series.Title
-	}
-	if first.SeriesTitle != "" {
-		return first.SeriesTitle
-	}
-	return seriesID
-}
-
 // enqueue routes a download request to the right Manager method by granularity,
-// returning the resulting (parent) job. episode → Enqueue (one job); season /
-// series → EnqueueBatch (one parent job spanning many episode sub-tasks). It is
-// the single entry point shared by the web form (W3) and the JSON API (W6).
-func (s *Server) enqueue(kind, id string, opts DownloadOpts) (*jobs.Job, error) {
+// returning the resulting jobs. episode → Enqueue (one job, enriched with the
+// episode title/thumbnail from GetEpisodeInfo); season / series → EnqueueMany
+// (one job per episode, up to N concurrent). It is the single entry point
+// shared by the web form (W3) and the JSON API (W6).
+func (s *Server) enqueue(kind, id string, opts DownloadOpts) ([]*jobs.Job, error) {
 	s.mu.RLock()
 	buildTask := s.buildTask
 	buildSeason := s.buildSeasonTasks
@@ -326,25 +349,33 @@ func (s *Server) enqueue(kind, id string, opts DownloadOpts) (*jobs.Job, error) 
 		if buildSeason == nil {
 			return nil, errNotConfigured
 		}
-		tasks, label, err := buildSeason(id, opts)
+		specs, err := buildSeason(id, opts)
 		if err != nil {
 			return nil, err
 		}
-		return s.manager.EnqueueBatch(label, tasks), nil
+		return s.manager.EnqueueMany(specs), nil
 	case "series":
 		if buildSeries == nil {
 			return nil, errNotConfigured
 		}
-		tasks, label, err := buildSeries(id, opts)
+		specs, err := buildSeries(id, opts)
 		if err != nil {
 			return nil, err
 		}
-		return s.manager.EnqueueBatch(label, tasks), nil
+		return s.manager.EnqueueMany(specs), nil
 	default:
 		if buildTask == nil {
 			return nil, errNotConfigured
 		}
-		return s.manager.Enqueue(s.episodeTitle(id), buildTask(id, opts)), nil
+		title, imageURL, season, episode := s.episodeMeta(id)
+		return []*jobs.Job{s.manager.Enqueue(jobs.JobSpec{
+			Label:         title,
+			Title:         title,
+			ImageURL:      imageURL,
+			SeasonNumber:  season,
+			EpisodeNumber: episode,
+			Task:          buildTask(id, opts),
+		})}, nil
 	}
 }
 
@@ -359,6 +390,7 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /settings", s.handleSettings)
 	mux.HandleFunc("POST /settings", s.handleSettingsPost)
+	mux.HandleFunc("POST /settings/downloads", s.handleSettingsDownloadsPost)
 	mux.HandleFunc("GET /browse", s.handleBrowse)
 	mux.HandleFunc("POST /browse", s.handleBrowsePost)
 	mux.HandleFunc("GET /season/{id}/episodes", s.handleSeasonEpisodes)
@@ -366,6 +398,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /downloads", s.handleDownloadPost)
 	mux.HandleFunc("GET /jobs", s.handleJobs)
 	mux.HandleFunc("GET /jobs/list", s.handleJobsList)
+	mux.HandleFunc("GET /jobs/events", s.handleJobsEvents)
 	mux.HandleFunc("GET /jobs/{id}/events", s.handleJobEvents)
 
 	// JSON API surface (W6). CORS is scoped to these routes only via

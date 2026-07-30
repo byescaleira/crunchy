@@ -61,7 +61,7 @@ func newTestServer(t *testing.T) *Server {
 	t.Helper()
 	dir := t.TempDir()
 	return &Server{
-		manager: jobs.NewManager(),
+		manager: jobs.NewManager(3),
 		dataDir: dir,
 		cfgPath: filepath.Join(dir, "config.json"),
 	}
@@ -379,15 +379,14 @@ func TestDownloadNew_SeriesSummary(t *testing.T) {
 
 func TestDownloadPost_Season(t *testing.T) {
 	s := newTestServer(t)
-	s.buildSeasonTasks = func(seasonID string, opts DownloadOpts) ([]jobs.Task, string, error) {
+	s.buildSeasonTasks = func(seasonID string, opts DownloadOpts) ([]jobs.JobSpec, error) {
 		if seasonID != "SEASON2" {
 			t.Errorf("buildSeasonTasks got id %q, want SEASON2", seasonID)
 		}
-		tasks := []jobs.Task{
-			func(download.Progress) error { return nil },
-			func(download.Progress) error { return nil },
-		}
-		return tasks, "Frieren — Season 2", nil
+		return []jobs.JobSpec{
+			{Label: "S02E01 — A", Title: "A", SeriesTitle: "Frieren", SeasonNumber: 2, EpisodeNumber: 1, GroupID: "SEASON2", GroupLabel: "Frieren — Season 2", Task: func(download.Progress) error { return nil }},
+			{Label: "S02E02 — B", Title: "B", SeriesTitle: "Frieren", SeasonNumber: 2, EpisodeNumber: 2, GroupID: "SEASON2", GroupLabel: "Frieren — Season 2", Task: func(download.Progress) error { return nil }},
+		}, nil
 	}
 	h := s.Handler()
 	r, w := postForm("/downloads", "kind=season&id=SEASON2&audioLangs=ja-JP&subsLangs=en-US")
@@ -398,41 +397,40 @@ func TestDownloadPost_Season(t *testing.T) {
 	if w.Body.Len() != 0 {
 		t.Errorf("expected empty body on success, got: %s", w.Body.String())
 	}
-	// A season is one batch parent job (not one job per episode).
-	if n := len(s.manager.List()); n != 1 {
-		t.Errorf("expected 1 batch job, got %d", n)
+	// A season is one job per episode (2 here), not one batch parent.
+	if n := len(s.manager.List()); n != 2 {
+		t.Errorf("expected 2 jobs (one per episode), got %d", n)
 	}
-	if s.manager.List()[0].Label != "Frieren — Season 2" {
-		t.Errorf("expected batch label, got %q", s.manager.List()[0].Label)
+	if got := s.manager.List()[0].GroupLabel; got != "Frieren — Season 2" {
+		t.Errorf("expected group label, got %q", got)
 	}
 }
 
 func TestDownloadPost_Series(t *testing.T) {
 	s := newTestServer(t)
-	s.buildSeriesTasks = func(seriesID string, opts DownloadOpts) ([]jobs.Task, string, error) {
-		tasks := []jobs.Task{
-			func(download.Progress) error { return nil },
-			func(download.Progress) error { return nil },
-			func(download.Progress) error { return nil },
-		}
-		return tasks, "Frieren", nil
+	s.buildSeriesTasks = func(seriesID string, opts DownloadOpts) ([]jobs.JobSpec, error) {
+		return []jobs.JobSpec{
+			{Label: "a", Task: func(download.Progress) error { return nil }},
+			{Label: "b", Task: func(download.Progress) error { return nil }},
+			{Label: "c", Task: func(download.Progress) error { return nil }},
+		}, nil
 	}
 	h := s.Handler()
 	r, w := postForm("/downloads", "kind=series&id=SERIES1&audioLangs=ja-JP")
 	h.ServeHTTP(w, r)
 	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
+		t.Fatalf("expected 200, got %d (body %s)", w.Code, w.Body.String())
 	}
-	// A series is one batch parent job spanning all seasons/episodes.
-	if n := len(s.manager.List()); n != 1 {
-		t.Errorf("expected 1 batch job, got %d", n)
+	// A series is one job per episode across all seasons (3 here).
+	if n := len(s.manager.List()); n != 3 {
+		t.Errorf("expected 3 jobs (one per episode), got %d", n)
 	}
 }
 
 func TestDownloadPost_SeasonDiscoveryFails(t *testing.T) {
 	s := newTestServer(t)
-	s.buildSeasonTasks = func(seasonID string, opts DownloadOpts) ([]jobs.Task, string, error) {
-		return nil, "", fmt.Errorf("list season episodes: boom")
+	s.buildSeasonTasks = func(seasonID string, opts DownloadOpts) ([]jobs.JobSpec, error) {
+		return nil, fmt.Errorf("list season episodes: boom")
 	}
 	h := s.Handler()
 	r, w := postForm("/downloads", "kind=season&id=SEASON2&audioLangs=ja-JP")
@@ -451,7 +449,7 @@ func TestDownloadPost_SeasonDiscoveryFails(t *testing.T) {
 func TestJobsList(t *testing.T) {
 	s := newTestServer(t)
 	s.buildTask = func(string, DownloadOpts) jobs.Task { return func(download.Progress) error { return nil } }
-	s.manager.Enqueue("ep1", func(download.Progress) error { return nil })
+	s.manager.Enqueue(jobs.JobSpec{Label: "ep1", Title: "Pilot", Task: func(download.Progress) error { return nil }})
 
 	h := s.Handler()
 	r, w := get("/jobs/list")
@@ -465,7 +463,7 @@ func TestJobsList(t *testing.T) {
 // percentage span, and the phase-label line that the SSE script drives.
 func TestJobsList_PhaseRail(t *testing.T) {
 	s := newTestServer(t)
-	s.manager.Enqueue("ep1", func(download.Progress) error { return nil })
+	s.manager.Enqueue(jobs.JobSpec{Label: "ep1", Task: func(download.Progress) error { return nil }})
 	h := s.Handler()
 	r, w := get("/jobs/list")
 	got := body(t, h, r, w)
@@ -485,6 +483,21 @@ func TestJobsList_PhaseRail(t *testing.T) {
 	}
 }
 
+// TestJobsList_GroupHeader asserts a season's episodes render under one section
+// header (the GroupLabel), and a standalone episode (no GroupID) renders no header.
+func TestJobsList_GroupHeader(t *testing.T) {
+	s := newTestServer(t)
+	s.manager.Enqueue(jobs.JobSpec{Label: "S02E01 — A", Title: "A", GroupID: "SEASON2", GroupLabel: "Frieren — Season 2", Task: func(download.Progress) error { return nil }})
+	s.manager.Enqueue(jobs.JobSpec{Label: "S02E02 — B", Title: "B", GroupID: "SEASON2", GroupLabel: "Frieren — Season 2", Task: func(download.Progress) error { return nil }})
+	s.manager.Enqueue(jobs.JobSpec{Label: "ep-x", Title: "X", Task: func(download.Progress) error { return nil }})
+	h := s.Handler()
+	r, w := get("/jobs/list")
+	got := body(t, h, r, w)
+	if c := strings.Count(got, "Frieren — Season 2"); c != 1 {
+		t.Errorf("group header should appear once for the 2 grouped jobs, got %d; %s", c, got)
+	}
+}
+
 // TestSSE_JobEvents enqueues a job that announces a phase, publishes a segment
 // and a message, then connects to its SSE stream and asserts the events arrive.
 func TestSSE_JobEvents(t *testing.T) {
@@ -495,7 +508,7 @@ func TestSSE_JobEvents(t *testing.T) {
 		p.Printf("Downloading ja-JP audio...\n")
 		return nil
 	}
-	job := s.manager.Enqueue("ep1", task)
+	job := s.manager.Enqueue(jobs.JobSpec{Label: "ep1", Task: task})
 	h := s.Handler()
 
 	r, w := get("/jobs/" + job.ID + "/events")
@@ -617,7 +630,7 @@ func TestAPIJobs_FoundAndMissing(t *testing.T) {
 	s.buildTask = func(string, DownloadOpts) jobs.Task {
 		return func(download.Progress) error { return nil }
 	}
-	job := s.manager.Enqueue("ep1", func(download.Progress) error { return nil })
+	job := s.manager.Enqueue(jobs.JobSpec{Label: "ep1", Title: "Pilot", SeriesTitle: "Frieren", SeasonNumber: 1, EpisodeNumber: 3, Task: func(download.Progress) error { return nil }})
 
 	h := s.Handler()
 	r, w := get("/api/jobs/"+job.ID)
@@ -632,12 +645,101 @@ func TestAPIJobs_FoundAndMissing(t *testing.T) {
 	if !strings.Contains(got, job.ID) {
 		t.Errorf("job body missing id: %s", got)
 	}
+	if !strings.Contains(got, `"seriesTitle"`) || !strings.Contains(got, "Frieren") {
+		t.Errorf("job body missing display metadata: %s", got)
+	}
 
 	// Missing job -> 404.
 	r2, w2 := get("/api/jobs/nope")
 	h.ServeHTTP(w2, r2)
 	if w2.Code != http.StatusNotFound {
 		t.Errorf("expected 404 for unknown job, got %d", w2.Code)
+	}
+}
+
+// TestAPIDownload_SeasonDualForm asserts a season enqueue returns jobId (the
+// first episode's id) plus a jobs array (one entry per episode).
+func TestAPIDownload_SeasonDualForm(t *testing.T) {
+	s := newTestServer(t)
+	s.buildSeasonTasks = func(string, DownloadOpts) ([]jobs.JobSpec, error) {
+		return []jobs.JobSpec{
+			{Label: "S02E01 — A", Title: "A", SeasonNumber: 2, EpisodeNumber: 1, Task: func(download.Progress) error { return nil }},
+			{Label: "S02E02 — B", Title: "B", SeasonNumber: 2, EpisodeNumber: 2, Task: func(download.Progress) error { return nil }},
+		}, nil
+	}
+	h := s.Handler()
+	r, w := postJSON(`/api/download`, `{"kind":"season","id":"SEASON2","audio":["ja-JP"]}`)
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	got := w.Body.String()
+	if !strings.Contains(got, `"jobId"`) {
+		t.Errorf("expected jobId in body, got: %s", got)
+	}
+	if !strings.Contains(got, `"jobs"`) {
+		t.Errorf("expected jobs array in body, got: %s", got)
+	}
+	if n := len(s.manager.List()); n != 2 {
+		t.Errorf("expected 2 jobs, got %d", n)
+	}
+}
+
+// TestEnqueue_EpisodeMetadataOnJob asserts the single-episode path populates the
+// job's display metadata from GetEpisodeInfo so the card shows the title +
+// thumbnail + series eyebrow.
+func TestEnqueue_EpisodeMetadataOnJob(t *testing.T) {
+	s := newTestServer(t)
+	s.api = &fakeAPI{
+		info: media.EpisodeInfo{
+			Title: "Pilot",
+			EpisodeMetadata: media.EpisodeMetadata{
+				SeasonNumber:  1,
+				EpisodeNumber: 1,
+				Images: media.Images{Thumbnail: [][]media.Image{{{
+					Source: "https://img/pilot.jpg",
+				}}}},
+			},
+		},
+	}
+	s.buildTask = func(string, DownloadOpts) jobs.Task { return func(download.Progress) error { return nil } }
+	js, err := s.enqueue("episode", "ep1", DownloadOpts{})
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if len(js) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(js))
+	}
+	j := js[0]
+	if j.Title != "Pilot" || j.ImageURL != "https://img/pilot.jpg" || j.SeasonNumber != 1 || j.EpisodeNumber != 1 {
+		t.Errorf("episode metadata not on job: %+v", j)
+	}
+}
+
+// TestSettings_PersistMaxConcurrent asserts the Downloads form clamps and
+// persists the max-concurrent value (and never drops the token).
+func TestSettings_PersistMaxConcurrent(t *testing.T) {
+	s := newTestServer(t)
+	s.cfg = config{EtpRt: "tok-secret", MaxConcurrent: 3}
+	if err := s.saveConfig(s.cfg); err != nil {
+		t.Fatal(err)
+	}
+	h := s.Handler()
+	// 42 clamps to 8.
+	r, w := postForm("/settings/downloads", "maxConcurrent=42")
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	cfg, err := s.loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.EtpRt != "tok-secret" {
+		t.Errorf("persist must keep etpRt, got %q", cfg.EtpRt)
+	}
+	if cfg.MaxConcurrent != 8 {
+		t.Errorf("maxConcurrent should clamp to 8, got %d", cfg.MaxConcurrent)
 	}
 }
 

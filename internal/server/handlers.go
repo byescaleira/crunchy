@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"crunchyroll-downloader/internal/crunchy"
@@ -19,7 +20,13 @@ func valueOr(r *http.Request, key, def string) string {
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
-	render(w, r, web.SettingsPage(s.Configured(), ""))
+	s.mu.RLock()
+	maxConcurrent := s.cfg.MaxConcurrent
+	s.mu.RUnlock()
+	if maxConcurrent < 1 {
+		maxConcurrent = 3
+	}
+	render(w, r, web.SettingsPage(s.Configured(), "", maxConcurrent))
 }
 
 func (s *Server) handleSettingsPost(w http.ResponseWriter, r *http.Request) {
@@ -39,6 +46,34 @@ func (s *Server) handleSettingsPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	render(w, r, web.Alert("success", "Token saved and verified."))
+}
+
+// handleSettingsDownloadsPost persists the max-concurrent-downloads preference.
+// The value is clamped to 1..8; it is read only at startup to size the
+// jobs.Manager, so the rendered alert reminds the user to restart for it to
+// take effect. Only the MaxConcurrent field is touched — the token and other
+// prefs are preserved (read-modify-write via s.cfg).
+func (s *Server) handleSettingsDownloadsPost(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		render(w, r, web.Alert("error", err.Error()))
+		return
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(r.FormValue("maxConcurrent")))
+	if err != nil || n < 1 {
+		n = 1
+	}
+	if n > 8 {
+		n = 8
+	}
+	s.mu.Lock()
+	s.cfg.MaxConcurrent = n
+	cfg := s.cfg
+	s.mu.Unlock()
+	if err := s.saveConfig(cfg); err != nil {
+		render(w, r, web.Alert("error", "Could not save: "+err.Error()))
+		return
+	}
+	render(w, r, web.Alert("success", fmt.Sprintf("Saved — %d concurrent downloads. Restart the server for it to take effect.", n)))
 }
 
 func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
@@ -240,27 +275,37 @@ func (s *Server) downloadSummary(kind, id string) string {
 	case "series":
 		return "Download series"
 	default:
-		if title := s.episodeTitle(id); title != "" && title != id {
+		if title, _, _, _ := s.episodeMeta(id); title != "" && title != id {
 			return "Download episode — " + title
 		}
 		return "Download episode"
 	}
 }
 
-// episodeTitle best-effort resolves an episode's title for job labels and the
-// modal summary. It never errors: any failure (no token, network, missing) falls
-// back to the id.
-func (s *Server) episodeTitle(id string) string {
+// episodeMeta best-effort resolves an episode's display metadata (title,
+// thumbnail URL, season/episode numbers) for the job card and the modal summary.
+// It never errors: any failure (no token, network, missing) falls back to the
+// id for the title and zero values for the rest. It is a single GetEpisodeInfo
+// round-trip — the only extra fetch the per-episode path makes.
+func (s *Server) episodeMeta(id string) (title, imageURL string, season, episode int) {
 	s.mu.RLock()
 	api := s.api
 	s.mu.RUnlock()
 	if api == nil {
-		return id
+		return id, "", 0, 0
 	}
-	if info, err := api.GetEpisodeInfo(id); err == nil && info.Title != "" {
-		return info.Title
+	if info, err := api.GetEpisodeInfo(id); err == nil {
+		if info.Title != "" {
+			title = info.Title
+		} else {
+			title = id
+		}
+		imageURL = bestThumb(info.EpisodeMetadata.Images.Thumbnail)
+		season = info.EpisodeMetadata.SeasonNumber
+		episode = info.EpisodeMetadata.EpisodeNumber
+		return
 	}
-	return id
+	return id, "", 0, 0
 }
 
 // sessionOutputDir returns the configured output directory (under the read lock).

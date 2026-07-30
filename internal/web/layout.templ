@@ -43,6 +43,123 @@ templ Layout(title, active string) {
 				})();
 			</script>
 			<script>
+				// One multiplexed /jobs/events stream drives every job card on the
+				// page (Browse queue, Jobs page). Each SSE event carries the job id
+				// so the handlers dispatch to the matching card. The server sends a
+				// snapshot on connect (and on every EventSource reconnect), so a late
+				// or reconnected client catches up to the current state.
+				(function () {
+					if (window.__crdlJobs) { return; }
+					window.__crdlJobs = true;
+					var dotColor = {
+						queued: "bg-base-content/30",
+						downloading: "bg-primary",
+						muxing: "bg-primary",
+						done: "bg-success",
+						error: "bg-error"
+					};
+					var badgeClass = {
+						queued: "badge-ghost",
+						downloading: "badge-warning",
+						muxing: "badge-info",
+						done: "badge-success",
+						error: "badge-error"
+					};
+					var PHASES = ["subtitles", "audio", "video", "mux"];
+					var PHASE_LABELS = {
+						subtitles: "Fetching subtitles",
+						audio: "Downloading audio",
+						video: "Downloading segments",
+						mux: "Converting"
+					};
+					var CHIP_BASE = "inline-flex items-center px-1.5 py-0.5 rounded-field font-mono text-[10px] uppercase tracking-wider border transition-colors ";
+					var CHIP_DONE = "border-primary/40 text-primary bg-primary/10";
+					var CHIP_ACTIVE = "border-primary text-primary-content bg-primary";
+					var CHIP_PENDING = "border-base-300 text-base-content/40";
+					var phase = {};
+
+					function chipClass(state) {
+						if (state === "done") { return CHIP_BASE + CHIP_DONE; }
+						if (state === "active") { return CHIP_BASE + CHIP_ACTIVE; }
+						return CHIP_BASE + CHIP_PENDING;
+					}
+					function renderRail(id, ph) {
+						var idx = PHASES.indexOf(ph);
+						for (var i = 0; i < PHASES.length; i++) {
+							var chip = document.getElementById("job-" + id + "-chip-" + PHASES[i]);
+							if (!chip) { continue; }
+							var state = "pending";
+							if (idx >= 0) {
+								if (i < idx) { state = "done"; }
+								else if (i === idx) { state = "active"; }
+							}
+							chip.className = chipClass(state);
+						}
+					}
+					function renderRailDone(id) {
+						for (var i = 0; i < PHASES.length; i++) {
+							var chip = document.getElementById("job-" + id + "-chip-" + PHASES[i]);
+							if (chip) { chip.className = chipClass("done"); }
+						}
+					}
+					function setPct(id, pct) {
+						var box = document.getElementById("job-" + id + "-progress");
+						var bar = box && box.querySelector("progress");
+						if (bar) { bar.value = pct; }
+						var span = document.getElementById("job-" + id + "-pct");
+						if (span) { span.textContent = pct + "%"; }
+					}
+					function applyStatus(id, status, message) {
+						var badge = document.getElementById("job-" + id + "-status");
+						if (badge) {
+							badge.textContent = status;
+							badge.className = "badge " + (badgeClass[status] || "badge-ghost") + " badge-sm font-mono shrink-0 ml-auto";
+						}
+						var dot = document.getElementById("job-" + id + "-dot");
+						if (dot) {
+							dot.className = "inline-block h-2 w-2 rounded-full shrink-0 " + (dotColor[status] || "bg-base-content/30");
+						}
+						if (status === "error") {
+							var err = document.getElementById("job-" + id + "-error");
+							if (err && message) {
+								err.innerHTML = '<div class="text-xs text-error font-mono break-all"></div>';
+								err.firstChild.textContent = message;
+							}
+						}
+					}
+
+					var es = new EventSource("/jobs/events");
+					es.addEventListener("phase", function (e) {
+						var d = JSON.parse(e.data);
+						phase[d.id] = d.phase || "";
+						var label = document.getElementById("job-" + d.id + "-phase");
+						if (label) { label.textContent = PHASE_LABELS[d.phase] || d.phase; }
+						renderRail(d.id, d.phase);
+					});
+					es.addEventListener("segment", function (e) {
+						var d = JSON.parse(e.data);
+						var pct = d.total > 0 ? Math.round((d.done * 100) / d.total) : 0;
+						setPct(d.id, pct);
+						if (phase[d.id]) { renderRail(d.id, phase[d.id]); }
+					});
+					es.addEventListener("status", function (e) {
+						var d = JSON.parse(e.data);
+						applyStatus(d.id, d.status, d.message);
+					});
+					es.addEventListener("done", function (e) {
+						var d = JSON.parse(e.data);
+						applyStatus(d.id, d.status, d.message);
+						setPct(d.id, 100);
+						if (d.status !== "error") { renderRailDone(d.id); }
+						var label = document.getElementById("job-" + d.id + "-phase");
+						if (label) { label.textContent = d.status === "error" ? "Failed" : "Done"; }
+					});
+					// EventSource auto-reconnects on error; the server re-sends a
+					// snapshot on reconnect so state catches up. Nothing to do here.
+					es.addEventListener("error", function () {});
+				})();
+			</script>
+			<script>
 				// The download flow drives the modal with two HX-Trigger events
 				// (set by the POST /downloads response header):
 				//   closeDownloadModal — close the dialog and clear stale form state

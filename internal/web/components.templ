@@ -180,10 +180,12 @@ templ statusBadge(s jobs.Status) {
 
 // jobProgress renders a job's live progress: a phase-weighted ember bar with a
 // mono percentage, a four-step phase rail (SUB · AUDIO · VIDEO · MUX) that lights
-// up as each download phase starts, and a phase-label line. The bar climbs 0-90
-// across subtitles/audio/video, sits at 90 through mux, and the done event fills
-// it to 100. The phase rail is the signature element: completed chips dim-fill
-// ember, the active chip pulses (crdl-dot), future chips stay muted.
+// up as each download phase starts, and a phase-label line that reads like the
+// current phase ("Fetching subtitles", "Downloading audio", "Downloading
+// segments", "Converting"). The bar climbs 0-90 across subtitles/audio/video,
+// sits at 90 through mux, and the done event fills it to 100. Completed chips
+// dim-fill ember, the active chip is a calm solid ember (no blink), future
+// chips stay muted.
 templ jobProgress(j *jobs.Job) {
 	{{
 		done, total := j.Segment()
@@ -216,25 +218,39 @@ templ jobProgress(j *jobs.Job) {
 	<div class="font-mono text-xs text-primary/70 mt-1" id={ "job-" + j.ID + "-phase" }>{ label }</div>
 }
 
-// jobCard renders one job as a transmission-log line: a pulsing ember status dot
-// (the signature), the label, a status badge, a progress bar, and an error line
+// jobCard renders one job as a card: the episode thumbnail, a series · S##E##
+// eyebrow, the episode title, a status badge, a progress bar, and an error line
 // if it failed. The card's id lets the SSE handler target it for swaps;
-// data-job-sse opts it into the JobsPage EventSource script, and the dot/status
-// element ids let that script update them live.
+// data-job-sse opts the card into the multiplexed /jobs/events script, and the
+// dot/status/progress/phase element ids let that script update them live.
 templ jobCard(j *jobs.Job) {
 	<div class="flex flex-col gap-1 py-2.5 border-b border-base-300/70 last:border-b-0" id={ "job-" + j.ID } data-job-sse={ j.ID }>
-		<div class="flex items-center gap-2">
-			<span
-				id={ "job-" + j.ID + "-dot" }
-				class={ "inline-block h-2 w-2 rounded-full shrink-0 " + statusDotClass(j.Status()) + statusPulseClass(j.Status()) }
-			></span>
-			<h3 class="font-display text-sm leading-tight truncate flex-1" title={ j.Label }>{ j.Label }</h3>
-			<span class={ "badge " + statusBadgeClass(string(j.Status())) + " badge-sm font-mono shrink-0" } id={ "job-" + j.ID + "-status" }>{ string(j.Status()) }</span>
+		<div class="flex items-start gap-3">
+			if j.ImageURL != "" {
+				<img src={ j.ImageURL } alt={ jobDisplayTitle(j) } class="w-24 aspect-video object-cover rounded shrink-0 border border-base-300 bg-base-300/40" loading="lazy"/>
+			} else {
+				<div class="w-24 aspect-video bg-base-300/50 flex items-center justify-center shrink-0 rounded border border-base-300">
+					<span class="font-mono text-sm text-base-content/30">E{ j.EpisodeNumber }</span>
+				</div>
+			}
+			<div class="min-w-0 flex-1 flex flex-col gap-1">
+				<div class="flex items-center gap-2">
+					<span
+						id={ "job-" + j.ID + "-dot" }
+						class={ "inline-block h-2 w-2 rounded-full shrink-0 " + statusDotClass(j.Status()) }
+					></span>
+					if eb := jobEyebrow(j); eb != "" {
+						<span class="font-mono text-[10px] uppercase tracking-wider text-primary/70 truncate">{ eb }</span>
+					}
+					<span class={ "badge " + statusBadgeClass(string(j.Status())) + " badge-sm font-mono shrink-0 ml-auto" } id={ "job-" + j.ID + "-status" }>{ string(j.Status()) }</span>
+				</div>
+				<h3 class="font-display text-sm leading-tight truncate" title={ j.Label }>{ jobDisplayTitle(j) }</h3>
+			</div>
 		</div>
-		<div id={ "job-" + j.ID + "-progress" } class="pl-4">
+		<div id={ "job-" + j.ID + "-progress" } class="pl-[7.5rem]">
 			@jobProgress(j)
 		</div>
-		<div id={ "job-" + j.ID + "-error" } class="pl-4">
+		<div id={ "job-" + j.ID + "-error" } class="pl-[7.5rem]">
 			if j.Status() == "error" {
 				<div class="text-xs text-error font-mono break-all">{ j.Error() }</div>
 			}
@@ -242,8 +258,31 @@ templ jobCard(j *jobs.Job) {
 	</div>
 }
 
-// statusDotClass maps a job status to the dot color used by the transmission-log
-// line: ember while active, green done, red error, muted neutral queued.
+// jobDisplayTitle returns the episode title for the card heading, falling back
+// to the job label when no title was captured (e.g. an episode whose info fetch
+// failed and degraded to the id).
+func jobDisplayTitle(j *jobs.Job) string {
+	if j.Title != "" {
+		return j.Title
+	}
+	return j.Label
+}
+
+// jobEyebrow returns the "Series · S##E##" (or just "S##E##") line above a job
+// card title. Empty when no series/season/episode metadata is present.
+func jobEyebrow(j *jobs.Job) string {
+	if j.SeriesTitle != "" {
+		return fmt.Sprintf("%s · S%02dE%02d", j.SeriesTitle, j.SeasonNumber, j.EpisodeNumber)
+	}
+	if j.SeasonNumber != 0 || j.EpisodeNumber != 0 {
+		return fmt.Sprintf("S%02dE%02d", j.SeasonNumber, j.EpisodeNumber)
+	}
+	return ""
+}
+
+// statusDotClass maps a job status to the dot color: ember while active, green
+// done, red error, muted neutral queued. The dot is a calm solid color (no
+// pulse) — the rubber-hose restyle (Part B) adds a tasteful animated indicator.
 func statusDotClass(s jobs.Status) string {
 	switch string(s) {
 	case "downloading", "muxing":
@@ -257,31 +296,22 @@ func statusDotClass(s jobs.Status) string {
 	}
 }
 
-// statusPulseClass returns " crdl-dot" while a job is active so the dot pulses
-// (the signature); empty otherwise. (Leading space keeps it concat-safe.)
-func statusPulseClass(s jobs.Status) string {
-	switch string(s) {
-	case "downloading", "muxing":
-		return " crdl-dot"
-	default:
-		return ""
-	}
-}
-
 // phaseOrder is the fixed download-phase order shown on the jobs phase rail.
 var phaseOrder = []string{"subtitles", "audio", "video", "mux"}
 
 // phaseLabel returns the human label for a download phase, or "" if unknown.
+// These read like the current action so the user can tell what the job is doing
+// at a glance (audio / segments / converting).
 func phaseLabel(phase string) string {
 	switch phase {
 	case "subtitles":
-		return "Subtitles"
+		return "Fetching subtitles"
 	case "audio":
-		return "Audio"
+		return "Downloading audio"
 	case "video":
-		return "Video"
+		return "Downloading segments"
 	case "mux":
-		return "Muxing"
+		return "Converting"
 	}
 	return ""
 }
@@ -312,14 +342,14 @@ func phaseIndex(phase string) int {
 }
 
 // phaseChipClass returns the rail chip class for a phase key given the job's
-// status and current phase. Completed chips dim-fill ember, the active chip
-// pulses (crdl-dot), future chips stay muted. A done job shows every chip
-// completed; an error job shows the phases that already ran as completed and
-// leaves the rest muted (it failed mid-phase).
+// status and current phase. Completed chips dim-fill ember, the active chip is
+// a solid ember (no blink), future chips stay muted. A done job shows every
+// chip completed; an error job shows the phases that already ran as completed
+// and leaves the rest muted (it failed mid-phase).
 func phaseChipClass(status, current, key string) string {
 	const base = "inline-flex items-center px-1.5 py-0.5 rounded-field font-mono text-[10px] uppercase tracking-wider border transition-colors "
 	const done = "border-primary/40 text-primary bg-primary/10"
-	const active = "border-primary text-primary-content bg-primary crdl-dot"
+	const active = "border-primary text-primary-content bg-primary"
 	const pending = "border-base-300 text-base-content/40"
 
 	ki := phaseIndex(key)

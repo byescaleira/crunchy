@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -164,7 +165,7 @@ func (s *Server) handleAPIDownload(w http.ResponseWriter, r *http.Request) {
 		opts.SubsLangs = []string{"en-US"}
 	}
 
-	job, err := s.enqueue(kind, id, opts)
+	jobs, err := s.enqueue(kind, id, opts)
 	if err != nil {
 		// errNotConfigured carries a safe, user-actionable message (it never
 		// mentions the token value), so surface it verbatim so the client can
@@ -185,19 +186,39 @@ func (s *Server) handleAPIDownload(w http.ResponseWriter, r *http.Request) {
 	// (shared helper with the web form).
 	s.persistLastOpts(opts)
 
-	writeJSON(w, http.StatusCreated, map[string]any{"jobId": job.ID})
+	// Dual form for one release: jobId (the first/only job id, backward-compat
+	// with single-episode clients) plus jobs (one entry per episode for a
+	// season/series). An empty result is surfaced as an empty jobId.
+	jobsOut := make([]map[string]any, 0, len(jobs))
+	for _, j := range jobs {
+		jobsOut = append(jobsOut, map[string]any{
+			"id":      j.ID,
+			"title":   j.Title,
+			"episode": fmt.Sprintf("S%02dE%02d", j.SeasonNumber, j.EpisodeNumber),
+		})
+	}
+	firstID := ""
+	if len(jobs) > 0 {
+		firstID = jobs[0].ID
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"jobId": firstID, "jobs": jobsOut})
 }
 
 // jobJSON is the JSON view of a jobs.Job for GET /api/jobs/{id}. The channel
 // fields (Events/Done) are deliberately omitted — they cannot be marshaled
-// and would leak internals.
+// and would leak internals. The display fields (Title/SeriesTitle/Season/
+// Episode) mirror the job card so an API client can render the same metadata.
 type jobJSON struct {
-	ID       string      `json:"id"`
-	Label    string      `json:"label"`
-	Status   string      `json:"status"`
-	Phase    string      `json:"phase"`
-	Progress jobProgress `json:"progress"`
-	Error    string      `json:"error"`
+	ID         string      `json:"id"`
+	Label      string      `json:"label"`
+	Title      string      `json:"title"`
+	SeriesTitle string      `json:"seriesTitle"`
+	Season     int         `json:"season"`
+	Episode    int         `json:"episode"`
+	Status     string      `json:"status"`
+	Phase      string      `json:"phase"`
+	Progress   jobProgress  `json:"progress"`
+	Error      string      `json:"error"`
 }
 
 type jobProgress struct {
@@ -220,10 +241,14 @@ func (s *Server) handleAPIJob(w http.ResponseWriter, r *http.Request) {
 		pct = done * 100 / total
 	}
 	writeJSON(w, http.StatusOK, jobJSON{
-		ID:     job.ID,
-		Label:  job.Label,
-		Status: string(job.Status()),
-		Phase:  job.Phase(),
+		ID:         job.ID,
+		Label:      job.Label,
+		Title:      job.Title,
+		SeriesTitle: job.SeriesTitle,
+		Season:     job.SeasonNumber,
+		Episode:    job.EpisodeNumber,
+		Status:     string(job.Status()),
+		Phase:      job.Phase(),
 		Progress: jobProgress{
 			Done:    done,
 			Total:   total,

@@ -65,18 +65,3 @@
     letter-spacing: 0.02em;
   }
 }
-
-/* Signature: the transmission-log status dot. Pulses while a job downloads;
-   freezes (static) under prefers-reduced-motion. */
-@keyframes crdl-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
-}
-.crdl-dot {
-  animation: crdl-pulse 1.4s ease-in-out infinite;
-}
-@media (prefers-reduced-motion: reduce) {
-  .crdl-dot {
-    animation: none;
-  }
-}
