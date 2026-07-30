@@ -9,7 +9,6 @@ import (
 )
 
 var (
-	token         = ""
 	audioLang     = flag.String("audio-lang", "ja-JP", "Audio language(s), comma-separated for multiple (e.g. \"ja-JP,en-US\"). First is the default track")
 	subtitlesLang = flag.String("subs-lang", "en-US", "Subtitle language(s), comma-separated for multiple (e.g. \"en-US,es-419\"). First is the default track")
 	videoQuality  = flag.String("video-quality", "1080p", "Video quality")
@@ -53,7 +52,7 @@ func parseContentURL(url string) (contentType, contentId string, err error) {
 	return contentType, contentId, nil
 }
 
-func processUrl(url string) {
+func processUrl(c *CrunchyClient, url string) {
 	contentType, contentId, err := parseContentURL(url)
 	if err != nil {
 		fmt.Println(err)
@@ -76,10 +75,10 @@ func processUrl(url string) {
 	}
 
 	if contentType == "watch" {
-		info := getEpisodeInfo(contentId)
-		downloadEpisode(contentId, info, audioLangs, subsLangs, videoQuality, audioQuality)
+		info := c.getEpisodeInfo(contentId)
+		downloadEpisode(c, contentId, info, audioLangs, subsLangs, videoQuality, audioQuality)
 	} else {
-		seasons := getSeasons(contentId, primaryAudio, primarySubs)
+		seasons := c.getSeasons(contentId, primaryAudio, primarySubs)
 
 		if *seasonNumber != 0 {
 			var seasonId string
@@ -94,14 +93,14 @@ func processUrl(url string) {
 				return
 			}
 
-			episodes := getSeasonEpisodes(seasonId, primaryAudio, primarySubs)
-			downloadSeason(videoQuality, audioQuality, audioLangs, subsLangs, episodes)
+			episodes := c.getSeasonEpisodes(seasonId, primaryAudio, primarySubs)
+			downloadSeason(c, videoQuality, audioQuality, audioLangs, subsLangs, episodes)
 		} else {
 			fmt.Print("No season number specified, downloading all seasons...\n")
 
 			for _, season := range seasons {
-				episodes := getSeasonEpisodes(season.ID, primaryAudio, primarySubs)
-				downloadSeason(videoQuality, audioQuality, audioLangs, subsLangs, episodes)
+				episodes := c.getSeasonEpisodes(season.ID, primaryAudio, primarySubs)
+				downloadSeason(c, videoQuality, audioQuality, audioLangs, subsLangs, episodes)
 			}
 		}
 	}
@@ -122,7 +121,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	token = GetAccessToken(*etpRt)
+	client, err := NewClient(*etpRt, *debug)
+	if err != nil {
+		fmt.Printf("Failed to get access token: %s\n", err)
+		os.Exit(1)
+	}
 
 	if *urlsFile != "" {
 		file, err := os.Open(*urlsFile)
@@ -144,10 +147,10 @@ func main() {
 		fmt.Printf("Found %d URLs to download\n\n", len(urls))
 		for i, u := range urls {
 			fmt.Printf("=== [%d/%d] %s ===\n", i+1, len(urls), u)
-			processUrl(u)
+			processUrl(client, u)
 			fmt.Println()
 		}
 	} else {
-		processUrl(*url)
+		processUrl(client, *url)
 	}
 }

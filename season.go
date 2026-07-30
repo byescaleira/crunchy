@@ -22,7 +22,7 @@ type SeasonEpisode struct {
 	AvailabilityStarts string        `json:"availability_starts"`
 }
 
-func getSeasonEpisodes(contentId string, audio_locale string, sub_locale string) []SeasonEpisode {
+func (c *CrunchyClient) getSeasonEpisodes(contentId string, audio_locale string, sub_locale string) []SeasonEpisode {
 	if audio_locale == "" {
 		audio_locale = "ja-JP"
 	}
@@ -31,13 +31,11 @@ func getSeasonEpisodes(contentId string, audio_locale string, sub_locale string)
 		sub_locale = "en-US"
 	}
 
-	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("https://www.crunchyroll.com/content/v2/cms/seasons/%s/episodes?preferred_audio_language=%s&locale=%s", contentId, audio_locale, sub_locale), nil)
+	req, err := c.crunchyRequest(http.MethodGet, fmt.Sprintf("https://www.crunchyroll.com/content/v2/cms/seasons/%s/episodes?preferred_audio_language=%s&locale=%s", contentId, audio_locale, sub_locale), nil, true)
 	if err != nil {
 		panic(err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:147.0) Gecko/20100101 Firefox/147.0")
-	resp, err := DoRequest(req)
+	resp, err := c.Do(req)
 	if err != nil {
 		panic(err)
 	}
@@ -63,7 +61,7 @@ type Season struct {
 	SeasonNumber int    `json:"season_number"`
 }
 
-func getSeasons(contentId string, audioLocale string, subLocale string) []Season {
+func (c *CrunchyClient) getSeasons(contentId string, audioLocale string, subLocale string) []Season {
 	if audioLocale == "" {
 		audioLocale = "ja-JP"
 	}
@@ -72,13 +70,11 @@ func getSeasons(contentId string, audioLocale string, subLocale string) []Season
 		subLocale = "en-US"
 	}
 
-	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("https://www.crunchyroll.com/content/v2/cms/series/%s/seasons?force_locale=&preferred_audio_language=%s&locale=%s", contentId, audioLocale, subLocale), nil)
+	req, err := c.crunchyRequest(http.MethodGet, fmt.Sprintf("https://www.crunchyroll.com/content/v2/cms/series/%s/seasons?force_locale=&preferred_audio_language=%s&locale=%s", contentId, audioLocale, subLocale), nil, true)
 	if err != nil {
 		panic(err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:147.0) Gecko/20100101 Firefox/147.0")
-	resp, err := DoRequest(req)
+	resp, err := c.Do(req)
 	if err != nil {
 		panic(err)
 	}

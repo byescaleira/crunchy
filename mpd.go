@@ -10,14 +10,12 @@ import (
 	"github.com/unki2aut/go-mpd"
 )
 
-func parseManifest(url string) *mpd.MPD {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+func (c *CrunchyClient) parseManifest(url string) *mpd.MPD {
+	req, err := c.crunchyRequest(http.MethodGet, url, nil, true)
 	if err != nil {
 		panic(err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:147.0) Gecko/20100101 Firefox/147.0")
-	resp, err := sharedClient.Do(req)
+	resp, err := c.Do(req)
 	if err != nil {
 		panic(err)
 	}
@@ -30,7 +28,7 @@ func parseManifest(url string) *mpd.MPD {
 	mpd := new(mpd.MPD)
 	mpd.Decode(body)
 
-	if *debug {
+	if c.Debug {
 		fmt.Printf("\n%s\n", string(body))
 	}
 

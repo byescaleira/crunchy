@@ -27,21 +27,20 @@ func buildUrl(base, representationId, file string, partNum *int64) string {
 	return base + strings.ReplaceAll(file, "$RepresentationID$", representationId)
 }
 
-func downloadPart(url string) ([]byte, error) {
+func downloadPart(c *CrunchyClient, url string) ([]byte, error) {
 	maxRetries := 5
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
 			time.Sleep(time.Duration(attempt) * 2 * time.Second)
 		}
 
-		req, err := http.NewRequest(http.MethodGet, url, nil)
+		req, err := c.crunchyRequest(http.MethodGet, url, nil, false)
 		if err != nil {
 			return nil, err
 		}
 		req.Header.Set("Origin", "https://static.crunchyroll.com")
 		req.Header.Set("Referer", "https://static.crunchyroll.com/")
-		req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:147.0) Gecko/20100101 Firefox/147.0")
-		resp, err := sharedClient.Do(req)
+		resp, err := c.Doer.Do(req)
 		if err != nil {
 			if attempt < maxRetries-1 {
 				continue
@@ -97,9 +96,9 @@ type segmentJob struct {
 	url   string
 }
 
-func downloadParts(baseUrl, representationId *string, set *mpd.AdaptationSet) (string, error) {
+func downloadParts(c *CrunchyClient, baseUrl, representationId *string, set *mpd.AdaptationSet) (string, error) {
 	initUrl := buildUrl(*baseUrl, *representationId, *set.SegmentTemplate.Initialization, nil)
-	initData, err := downloadPart(initUrl)
+	initData, err := downloadPart(c, initUrl)
 	if err != nil {
 		return "", err
 	}
@@ -123,7 +122,7 @@ func downloadParts(baseUrl, representationId *string, set *mpd.AdaptationSet) (s
 		go func() {
 			defer wg.Done()
 			for job := range jobs {
-				data, err := downloadPart(job.url)
+				data, err := downloadPart(c, job.url)
 				if err != nil {
 					errOnce.Do(func() { downloadErr = err })
 					return
@@ -247,15 +246,14 @@ func decryptSegmentsToFile(initData []byte, segFiles []string, outputFile string
 	return nil
 }
 
-func downloadSubs(url string) string {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+func downloadSubs(c *CrunchyClient, url string) string {
+	req, err := c.crunchyRequest(http.MethodGet, url, nil, false)
 	if err != nil {
 		panic(err)
 	}
 	req.Header.Set("Origin", "https://static.crunchyroll.com")
 	req.Header.Set("Referer", "https://static.crunchyroll.com/")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:147.0) Gecko/20100101 Firefox/147.0")
-	resp, err := sharedClient.Do(req)
+	resp, err := c.Doer.Do(req)
 	if err != nil {
 		panic(err)
 	}
@@ -297,7 +295,7 @@ func sanitize(s string) string {
 	return strings.TrimRight(res, " .")
 }
 
-func downloadEpisode(baseContentId string, info EpisodeInfo, audioLangs, subsLangs []string, videoQuality, audioQuality *string) {
+func downloadEpisode(c *CrunchyClient, baseContentId string, info EpisodeInfo, audioLangs, subsLangs []string, videoQuality, audioQuality *string) {
 	cleanSeriesTitle := sanitize(info.EpisodeMetadata.SeriesTitle)
 	cleanEpisodeTitle := sanitize(info.Title)
 
@@ -368,7 +366,7 @@ func downloadEpisode(baseContentId string, info EpisodeInfo, audioLangs, subsLan
 		fmt.Print("Cleaning up...")
 
 		for id, sToken := range activeStreams {
-			deleteStream(id, sToken)
+			c.deleteStream(id, sToken)
 		}
 		if r := recover(); r != nil {
 			fmt.Printf("Recovered from error: %v\n", r)
@@ -377,7 +375,7 @@ func downloadEpisode(baseContentId string, info EpisodeInfo, audioLangs, subsLan
 
 	// Fetch the first version's playback first so we can validate subtitle
 	// availability before downloading anything heavy.
-	firstEpisode := getEpisode(versions[0].contentId)
+	firstEpisode := c.getEpisode(versions[0].contentId)
 	activeStreams[versions[0].contentId] = firstEpisode.Token
 
 	if len(subsLangs) == 1 && subsLangs[0] == "all" {
@@ -402,7 +400,7 @@ func downloadEpisode(baseContentId string, info EpisodeInfo, audioLangs, subsLan
 	var subTracks []mediaTrack
 	for _, locale := range subsLangs {
 		fmt.Printf("Downloading subtitles for %s...\n", trackTitle(locale))
-		subTracks = append(subTracks, mediaTrack{file: downloadSubs(firstEpisode.Subtitles[locale].URL), locale: locale})
+		subTracks = append(subTracks, mediaTrack{file: downloadSubs(c, firstEpisode.Subtitles[locale].URL), locale: locale})
 	}
 	if len(subTracks) > 0 {
 		fmt.Println("Downloaded subtitles!")
@@ -414,18 +412,18 @@ func downloadEpisode(baseContentId string, info EpisodeInfo, audioLangs, subsLan
 	for i, version := range versions {
 		episode := firstEpisode
 		if i > 0 {
-			episode = getEpisode(version.contentId)
+			episode = c.getEpisode(version.contentId)
 			activeStreams[version.contentId] = episode.Token
 		}
 
-		manifest := parseManifest(episode.ManifestURL)
+		manifest := c.parseManifest(episode.ManifestURL)
 		pssh := getPssh(manifest)
 		if pssh == nil {
 			panic("PSSH not found")
 		}
 		// getLicense stores the keys in the global "keys" used by downloadParts,
 		// so audio for this version must be downloaded before the next license.
-		if err := getLicense(*pssh, version.contentId, episode.Token); err != nil {
+		if err := c.getLicense(*pssh, version.contentId, episode.Token); err != nil {
 			panic(fmt.Sprintf("getLicense for %s: %s", version.locale, err))
 		}
 
@@ -438,7 +436,7 @@ func downloadEpisode(baseContentId string, info EpisodeInfo, audioLangs, subsLan
 		if audioBaseUrl == nil {
 			panic(fmt.Sprintf("failed to get the audio base URL for %s, maybe the audio quality you entered is wrong?", version.locale))
 		}
-		audioFile, err := downloadParts(audioBaseUrl, audioRepresentationId, audioSet)
+		audioFile, err := downloadParts(c, audioBaseUrl, audioRepresentationId, audioSet)
 		if err != nil {
 			panic(err)
 		}
@@ -456,13 +454,13 @@ func downloadEpisode(baseContentId string, info EpisodeInfo, audioLangs, subsLan
 			if baseUrl == nil {
 				panic("failed to get the video base URL, maybe the video quality you entered is wrong?")
 			}
-			videoFile, err = downloadParts(baseUrl, representationId, videoSet)
+			videoFile, err = downloadParts(c, baseUrl, representationId, videoSet)
 			if err != nil {
 				panic(err)
 			}
 		}
 
-		if success := deleteStream(version.contentId, episode.Token); !success {
+		if success := c.deleteStream(version.contentId, episode.Token); !success {
 			fmt.Print("Failed to remove the player stream, you will probably have issues downloading other episodes.\n")
 		}
 		delete(activeStreams, version.contentId)
@@ -471,7 +469,7 @@ func downloadEpisode(baseContentId string, info EpisodeInfo, audioLangs, subsLan
 	mergeEverything(videoFile, audioTracks, subTracks, outputFile, info)
 }
 
-func downloadSeason(videoQuality, audioQuality *string, audioLangs, subsLangs []string, episodes []SeasonEpisode) {
+func downloadSeason(c *CrunchyClient, videoQuality, audioQuality *string, audioLangs, subsLangs []string, episodes []SeasonEpisode) {
 	fmt.Printf("Downloading season %v of %s (%v episodes)\n\n", episodes[0].SeasonNumber, episodes[0].SeriesTitle, len(episodes))
 
 	for _, episode := range episodes {
@@ -487,6 +485,6 @@ func downloadSeason(videoQuality, audioQuality *string, audioLangs, subsLangs []
 			Title: episode.Title,
 		}
 
-		downloadEpisode(episode.ID, info, audioLangs, subsLangs, videoQuality, audioQuality)
+		downloadEpisode(c, episode.ID, info, audioLangs, subsLangs, videoQuality, audioQuality)
 	}
 }
