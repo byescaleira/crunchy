@@ -85,6 +85,8 @@ func (s *Server) handleJobsEvents(w http.ResponseWriter, r *http.Request) {
 				send("status", map[string]any{"id": id, "status": string(jobs.StatusError), "message": e.Message})
 			case jobs.EventDone:
 				send("done", map[string]any{"id": id, "status": string(e.Status)})
+			case jobs.EventRemoved:
+				send("removed", map[string]any{"id": id})
 			}
 		}
 	}

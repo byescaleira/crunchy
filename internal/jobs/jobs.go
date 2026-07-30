@@ -12,6 +12,7 @@
 package jobs
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -29,6 +30,7 @@ const (
 	StatusMuxing       Status = "muxing"
 	StatusDone        Status = "done"
 	StatusError       Status = "error"
+	StatusCancelled   Status = "cancelled" // user-cancelled mid-flight
 )
 
 // EventType names the kind of progress Event published to subscribers.
@@ -39,8 +41,9 @@ const (
 	EventMessage EventType = "message" // a Printf progress line
 	EventSegment EventType = "segment" // a Segment(done, total) tick
 	EventPhase   EventType = "phase"   // a Phase(name) transition (subtitles/audio/video/mux)
-	EventDone    EventType = "done"    // terminal: the job finished (success or error)
+	EventDone    EventType = "done"    // terminal: the job finished (success or error/cancel)
 	EventError   EventType = "error"   // terminal error detail
+	EventRemoved EventType = "removed" // the job was deleted from the Manager (UI drops the card)
 )
 
 // Event is one update published to a job's subscribers. The authoritative job
@@ -132,8 +135,15 @@ type Job struct {
 	GroupID       string // groups episodes of one season/series for a section header
 	GroupLabel    string // header text for the group (e.g. "Frieren — Season 2")
 
+	// Restart target: the granularity + content id needed to re-enqueue this job
+	// (per-episode, matching the per-card Restart button). RestartKind is
+	// "episode" and RestartID the episode content id. Read-only after construction.
+	RestartKind string
+	RestartID   string
+
 	events   chan Event
 	broadcast func(EnvelopeEvent)
+	cancel   context.CancelFunc // set in Enqueue; Cancel() calls it to abort the task
 	donec   chan struct{}
 
 	mu       sync.RWMutex
@@ -217,11 +227,12 @@ func (j *Job) emit(e Event) {
 	}
 }
 
-// Task is the unit of work the Manager runs. The Manager hands it a
-// download.Progress (a channelProgress bound to the job) so the download's
-// existing Printf/Segment calls publish into the job's event stream unchanged.
-// A nil error marks the job done; a non-nil error marks it failed.
-type Task func(progress download.Progress) error
+// Task is the unit of work the Manager runs. The Manager hands it a context
+// (so a Cancel aborts the in-flight download) and a download.Progress (a
+// channelProgress bound to the job) so the download's existing Printf/Segment
+// calls publish into the job's event stream unchanged. A nil error marks the job
+// done; a context error marks it cancelled; any other error marks it failed.
+type Task func(ctx context.Context, progress download.Progress) error
 
 // JobSpec is the input to Enqueue: a Task plus the write-once display fields
 // that let the job card render the episode thumbnail + title + series eyebrow.
@@ -236,6 +247,12 @@ type JobSpec struct {
 	EpisodeNumber int
 	GroupID       string
 	GroupLabel    string
+
+	// Restart target stored on the Job so a Restart button can re-enqueue without
+	// the original closure (which is one-shot). RestartKind is "episode";
+	// RestartID is the episode content id.
+	RestartKind string
+	RestartID   string
 }
 
 // Manager runs a queue of jobs with up to maxConcurrent running at once. It is
@@ -270,29 +287,35 @@ func NewManager(maxConcurrent int) *Manager {
 // (StatusQueued) before the task begins; jobs beyond the concurrency limit stay
 // queued until a slot frees.
 func (m *Manager) Enqueue(spec JobSpec) *Job {
+	ctx, cancel := context.WithCancel(context.Background())
 	j := &Job{
-		ID:           uuid.NewString(),
-		Label:        spec.Label,
-		Title:        spec.Title,
-		ImageURL:     spec.ImageURL,
-		SeriesTitle:  spec.SeriesTitle,
-		SeasonNumber: spec.SeasonNumber,
+		ID:            uuid.NewString(),
+		Label:         spec.Label,
+		Title:         spec.Title,
+		ImageURL:      spec.ImageURL,
+		SeriesTitle:   spec.SeriesTitle,
+		SeasonNumber:  spec.SeasonNumber,
 		EpisodeNumber: spec.EpisodeNumber,
-		GroupID:      spec.GroupID,
-		GroupLabel:   spec.GroupLabel,
-		events:       make(chan Event, 256),
-		broadcast:    m.broadcast,
-		donec:        make(chan struct{}),
-		status:       StatusQueued,
+		GroupID:       spec.GroupID,
+		GroupLabel:    spec.GroupLabel,
+		RestartKind:   spec.RestartKind,
+		RestartID:     spec.RestartID,
+		events:        make(chan Event, 256),
+		broadcast:     m.broadcast,
+		cancel:        cancel,
+		donec:         make(chan struct{}),
+		status:        StatusQueued,
 	}
 	j.emit(Event{Type: EventStatus, Status: StatusQueued})
 
+	// Set cancel before publishing the job into the map so a concurrent Cancel(id)
+	// (which reads j.cancel under m.mu via Get) always sees it.
 	m.mu.Lock()
 	m.jobs[j.ID] = j
 	m.order = append(m.order, j.ID)
 	m.mu.Unlock()
 
-	go m.run(j, spec.Task)
+	go m.run(ctx, j, spec.Task)
 	return j
 }
 
@@ -310,20 +333,39 @@ func (m *Manager) EnqueueMany(specs []JobSpec) []*Job {
 }
 
 // run is the per-job runner. It blocks on the concurrency semaphore, runs the
-// task with a channelProgress, records the terminal state, and closes the job's
-// event/done channels so subscribers can drain and exit.
-func (m *Manager) run(j *Job, task Task) {
+// task with the job's context + a channelProgress, records the terminal state,
+// and closes the job's event/done channels so subscribers can drain and exit. A
+// context error from the task (Cancel was called) is recorded as StatusCancelled
+// rather than StatusError, so the card reads "cancelled" not "failed".
+func (m *Manager) run(ctx context.Context, j *Job, task Task) {
 	m.sem <- struct{}{}
 	defer func() {
 		<-m.sem
+		j.cancel() // idempotent: no-op if already cancelled or already completed
 		close(j.events)
 		close(j.donec)
 	}()
 
+	// A job cancelled while queued (before it acquired a slot) goes straight to
+	// cancelled, skipping the downloading transition.
+	if err := ctx.Err(); err != nil {
+		j.set(StatusCancelled, "")
+		j.emit(Event{Type: EventStatus, Status: StatusCancelled})
+		j.emit(Event{Type: EventDone, Status: StatusCancelled})
+		return
+	}
+
 	j.set(StatusDownloading, "")
 	j.emit(Event{Type: EventStatus, Status: StatusDownloading})
 
-	if err := task(&channelProgress{job: j}); err != nil {
+	if err := task(ctx, &channelProgress{job: j}); err != nil {
+		if ctx.Err() != nil {
+			// Cancelled: don't surface the raw "context canceled" string as an
+			// error — the card shows the "cancelled" status instead.
+			j.set(StatusCancelled, "")
+			j.emit(Event{Type: EventDone, Status: StatusCancelled})
+			return
+		}
 		j.set(StatusError, err.Error())
 		j.emit(Event{Type: EventError, Message: err.Error()})
 		j.emit(Event{Type: EventDone, Status: StatusError})
@@ -394,6 +436,56 @@ func (m *Manager) List() []*Job {
 		out[i] = m.jobs[id]
 	}
 	return out
+}
+
+// Cancel aborts a running (or queued) job by cancelling its context. The task
+// observes the cancellation at its next I/O boundary (segment fetch, decrypt
+// step, mux) and run records StatusCancelled. Returns false if the job does not
+// exist or is already terminal (done/error/cancelled) — cancelling a finished
+// job is a no-op. j.cancel was set in Enqueue before the job was published under
+// m.mu, so the read here (via Get, which locks m.mu) sees it.
+func (m *Manager) Cancel(id string) bool {
+	j, ok := m.Get(id)
+	if !ok {
+		return false
+	}
+	switch j.Status() {
+	case StatusDone, StatusError, StatusCancelled:
+		return false
+	}
+	j.cancel()
+	return true
+}
+
+// Delete removes a terminal job from the Manager and broadcasts an EventRemoved
+// so subscribers drop the card live. A still-running job is not removed (returns
+// false) — the caller must Cancel it first and let it reach a terminal state.
+func (m *Manager) Delete(id string) bool {
+	m.mu.Lock()
+	j, ok := m.jobs[id]
+	if !ok {
+		m.mu.Unlock()
+		return false
+	}
+	switch j.Status() {
+	case StatusDone, StatusError, StatusCancelled:
+		// terminal — safe to remove
+	default:
+		m.mu.Unlock()
+		return false
+	}
+	delete(m.jobs, id)
+	for i, oid := range m.order {
+		if oid == id {
+			m.order = append(m.order[:i], m.order[i+1:]...)
+			break
+		}
+	}
+	m.mu.Unlock()
+	// Broadcast outside m.mu: broadcast takes subsMu only, and nothing in the
+	// broadcast path takes m.mu, so there is no lock-ordering hazard.
+	m.broadcast(EnvelopeEvent{JobID: id, Event: Event{Type: EventRemoved}})
+	return true
 }
 
 // channelProgress adapts a single-episode Job onto the download.Progress seam:

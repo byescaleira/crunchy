@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -21,7 +22,7 @@ func spec(label string, task Task) JobSpec {
 func TestManager_EnqueueComplete(t *testing.T) {
 	m := NewManager(1)
 
-	j := m.Enqueue(spec("S01E01", func(p download.Progress) error {
+	j := m.Enqueue(spec("S01E01", func(ctx context.Context, p download.Progress) error {
 		p.Printf("Downloading %s audio...\n", "ja-JP")
 		p.Phase("audio")
 		p.Segment(1, 3)
@@ -80,7 +81,7 @@ func TestManager_EnqueueComplete(t *testing.T) {
 // StatusError with the error message surfaced.
 func TestManager_ErrorTerminal(t *testing.T) {
 	m := NewManager(1)
-	j := m.Enqueue(spec("bad", func(p download.Progress) error {
+	j := m.Enqueue(spec("bad", func(ctx context.Context, p download.Progress) error {
 		return errBoom
 	}))
 	<-j.Done()
@@ -104,7 +105,7 @@ func TestEnqueueMany_RunsUpToNConcurrent(t *testing.T) {
 
 	specs := make([]JobSpec, 0, n)
 	for i := 0; i < n; i++ {
-		specs = append(specs, spec("job", func(p download.Progress) error {
+		specs = append(specs, spec("job", func(ctx context.Context, p download.Progress) error {
 			cur := concurrent.Add(1)
 			for {
 				max := maxConcurrent.Load()
@@ -139,7 +140,7 @@ func TestManager_GetList(t *testing.T) {
 	ids := make([]string, 3)
 	for i := range ids {
 		wg.Add(1)
-		j := m.Enqueue(spec("label", func(p download.Progress) error { wg.Done(); return nil }))
+		j := m.Enqueue(spec("label", func(ctx context.Context, p download.Progress) error { wg.Done(); return nil }))
 		ids[i] = j.ID
 	}
 	wg.Wait()
@@ -168,7 +169,7 @@ func TestEnqueue_PopulatesJobMetadata(t *testing.T) {
 	m := NewManager(1)
 	j := m.Enqueue(JobSpec{
 		Label:         "S02E05 — The Fold",
-		Task:          func(download.Progress) error { return nil },
+		Task:          func(ctx context.Context, _ download.Progress) error { return nil },
 		Title:         "The Fold",
 		ImageURL:      "https://img/ep.jpg",
 		SeriesTitle:   "Frieren",
@@ -197,9 +198,9 @@ func TestEnqueue_PopulatesJobMetadata(t *testing.T) {
 func TestEnqueueMany_IndependentErrors(t *testing.T) {
 	m := NewManager(3)
 	specs := []JobSpec{
-		spec("ok1", func(download.Progress) error { return nil }),
-		spec("boom", func(download.Progress) error { return errBoom }),
-		spec("ok2", func(download.Progress) error { return nil }),
+		spec("ok1", func(context.Context, download.Progress) error { return nil }),
+		spec("boom", func(context.Context, download.Progress) error { return errBoom }),
+		spec("ok2", func(context.Context, download.Progress) error { return nil }),
 	}
 	js := m.EnqueueMany(specs)
 	for _, j := range js {
@@ -227,7 +228,7 @@ func TestSubscribe_SnapshotAndBroadcast(t *testing.T) {
 		t.Fatalf("snapshot should be empty before any job, got %d", len(snapshot))
 	}
 
-	j := m.Enqueue(spec("ep", func(p download.Progress) error {
+	j := m.Enqueue(spec("ep", func(ctx context.Context, p download.Progress) error {
 		p.Phase("audio")
 		return nil
 	}))
@@ -291,3 +292,107 @@ type boomErr string
 func (b boomErr) Error() string { return string(b) }
 
 const errBoom boomErr = "kaboom"
+
+// TestManager_Cancel verifies that cancelling a running job aborts the task
+// (it observes ctx.Done() and returns ctx.Err()) and the job ends StatusCancelled,
+// not StatusError — the card should read "cancelled", not "failed". It also
+// checks that cancelling an already-terminal job is a no-op (returns false) and
+// that the slot is freed (a queued job then runs).
+func TestManager_Cancel(t *testing.T) {
+	m := NewManager(1)
+
+	started := make(chan struct{})
+	j := m.Enqueue(spec("cancelme", func(ctx context.Context, p download.Progress) error {
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	}))
+	<-started
+
+	if ok := m.Cancel(j.ID); !ok {
+		t.Fatalf("Cancel returned false on a running job")
+	}
+	<-j.Done()
+
+	if got := j.Status(); got != StatusCancelled {
+		t.Fatalf("status = %q, want %q", got, StatusCancelled)
+	}
+	if j.Error() != "" {
+		t.Errorf("cancelled job Error = %q, want empty (no surface of ctx.Err)", j.Error())
+	}
+
+	// Cancelling an already-terminal job is a no-op.
+	if ok := m.Cancel(j.ID); ok {
+		t.Errorf("Cancel on a terminal job returned true, want false (no-op)")
+	}
+}
+
+// TestManager_Delete verifies that Delete removes a terminal job and broadcasts
+// an EventRemoved (so the UI drops the card), that a still-running job is not
+// deleted (returns false — cancel first), and that deleting a missing job is a
+// no-op.
+func TestManager_Delete(t *testing.T) {
+	m := NewManager(2)
+	ch, _, cancelSub := m.Subscribe()
+	defer cancelSub()
+
+	// `running` blocks on ctx until cancelled — never terminal while blocked.
+	runningStarted := make(chan struct{})
+	running := m.Enqueue(spec("running", func(ctx context.Context, p download.Progress) error {
+		close(runningStarted)
+		<-ctx.Done()
+		return ctx.Err()
+	}))
+	<-runningStarted
+
+	// A finished job reaches a terminal state on its own.
+	finishedDone := make(chan struct{})
+	finished := m.Enqueue(spec("finished", func(context.Context, download.Progress) error {
+		close(finishedDone)
+		return nil
+	}))
+	<-finishedDone
+	<-finished.Done()
+
+	// Delete on a still-running job is refused.
+	if ok := m.Delete(running.ID); ok {
+		t.Errorf("Delete of a running job returned true, want false")
+	}
+	if _, ok := m.Get(running.ID); !ok {
+		t.Errorf("running job should still be present after refused Delete")
+	}
+
+	// Delete on a terminal job succeeds and broadcasts removed.
+	if ok := m.Delete(finished.ID); !ok {
+		t.Fatalf("Delete of a terminal job returned false")
+	}
+	if _, ok := m.Get(finished.ID); ok {
+		t.Errorf("Get after Delete should be false")
+	}
+
+	// Drain the broadcast for the removed envelope.
+	sawRemoved := false
+	timeout := time.After(time.Second)
+	for !sawRemoved {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				t.Fatal("broadcast channel closed before removed envelope")
+			}
+			if ev.JobID == finished.ID && ev.Event.Type == EventRemoved {
+				sawRemoved = true
+			}
+		case <-timeout:
+			t.Fatal("timed out waiting for the removed envelope")
+		}
+	}
+
+	// Deleting a job that does not exist is a no-op (returns false).
+	if ok := m.Delete("nope"); ok {
+		t.Errorf("Delete of a missing job returned true, want false")
+	}
+
+	// Clean up so the goroutine exits.
+	m.Cancel(running.ID)
+	<-running.Done()
+}

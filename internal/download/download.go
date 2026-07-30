@@ -8,6 +8,7 @@ package download
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -65,19 +66,24 @@ type Downloader struct {
 	// The I/O steps are overridable func fields so the orchestration (the
 	// keys-ordering invariant, the per-track sequence) can be tested without
 	// network, Widevine, or ffmpeg. They default to the real implementations
-	// the first time a download runs (see ensureSeams).
-	downloadTrack     func(baseUrl, representationId *string, set *mpd.AdaptationSet, keys []*widevine.Key) (string, error)
-	downloadSubtitles func(url string) (string, error)
-	merge             func(videoFile string, audioTracks, subTracks []mux.MediaTrack, outputFile, coverFile, format string, info media.EpisodeInfo) error
+	// the first time a download runs (see ensureSeams). Each carries a
+	// context.Context so a cancelled job aborts the in-flight work (segment
+	// fetches, decrypt loop, ffmpeg) instead of running to completion.
+	downloadTrack     func(ctx context.Context, baseUrl, representationId *string, set *mpd.AdaptationSet, keys []*widevine.Key) (string, error)
+	downloadSubtitles func(ctx context.Context, url string) (string, error)
+	merge             func(ctx context.Context, videoFile string, audioTracks, subTracks []mux.MediaTrack, outputFile, coverFile, format string, info media.EpisodeInfo) error
 }
 
-// workers returns the configured segment-download parallelism, defaulting to 10
-// (the former package-level const) when unset.
+// workers returns the configured segment-download parallelism, defaulting to 16.
+// The default was raised from 10 once SharedClient got a real Transport
+// (MaxIdleConnsPerHost 100): the pool can now actually reuse keep-alive
+// connections to the CDN host, so more workers translate to throughput rather
+// than to new TLS handshakes. Set explicitly to stay conservative vs. CDN limits.
 func (d *Downloader) workers() int {
 	if d.MaxWorkers > 0 {
 		return d.MaxWorkers
 	}
-	return 10
+	return 16
 }
 
 // ensureSeams fills in the default I/O implementations, HTTP client and progress
@@ -91,7 +97,7 @@ func (d *Downloader) ensureSeams() {
 		d.downloadTrack = d.downloadParts
 	}
 	if d.downloadSubtitles == nil {
-		d.downloadSubtitles = func(url string) (string, error) { return downloadSubs(d.HTTP, url) }
+		d.downloadSubtitles = func(ctx context.Context, url string) (string, error) { return downloadSubs(ctx, d.HTTP, url) }
 	}
 	if d.merge == nil {
 		d.merge = mux.Merge
@@ -112,15 +118,34 @@ func buildUrl(base, representationId, file string, partNum *int64) string {
 	return base + strings.ReplaceAll(file, "$RepresentationID$", representationId)
 }
 
-func downloadPart(doer crunchy.Doer, url string) ([]byte, error) {
+// downloadPart fetches one segment URL with up to maxRetries attempts and a
+// linear backoff. The context both cancels an in-flight request (so a cancelled
+// job aborts the worker immediately, not after the body finishes) and bounds
+// each attempt with a per-segment timeout — a stalled CDN response fails fast
+// and retries instead of hanging a worker indefinitely. A cancelled context is
+// surfaced as ctx.Err() so the caller can distinguish cancel from a real error.
+func downloadPart(ctx context.Context, doer crunchy.Doer, url string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	maxRetries := 5
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * 2 * time.Second)
+			// Respect cancellation during the backoff sleep; a cancelled job
+			// should not pay the full backoff before exiting.
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Duration(attempt) * 2 * time.Second):
+			}
 		}
 
-		req, err := http.NewRequest(http.MethodGet, url, nil)
+		// Bound this single attempt so a stuck segment fails fast and retries,
+		// rather than holding a worker slot forever.
+		reqCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+		req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
 		if err != nil {
+			cancel()
 			return nil, err
 		}
 		req.Header.Set("User-Agent", crunchy.UserAgent)
@@ -128,6 +153,11 @@ func downloadPart(doer crunchy.Doer, url string) ([]byte, error) {
 		req.Header.Set("Referer", "https://static.crunchyroll.com/")
 		resp, err := doer.Do(req)
 		if err != nil {
+			cancel()
+			if ctx.Err() != nil {
+				// Parent cancelled — don't mask it as a retryable transport error.
+				return nil, ctx.Err()
+			}
 			if attempt < maxRetries-1 {
 				continue
 			}
@@ -135,6 +165,7 @@ func downloadPart(doer crunchy.Doer, url string) ([]byte, error) {
 		}
 		if resp.StatusCode != 200 {
 			resp.Body.Close()
+			cancel()
 			if attempt < maxRetries-1 {
 				continue
 			}
@@ -143,6 +174,7 @@ func downloadPart(doer crunchy.Doer, url string) ([]byte, error) {
 
 		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		cancel()
 		if err != nil {
 			if attempt < maxRetries-1 {
 				continue
@@ -185,10 +217,12 @@ type segmentJob struct {
 // downloadParts fetches the init segment and every media segment for one
 // adaptation set (in parallel), then decrypts them one at a time straight into
 // a temp output file using keys. Segments are streamed through per-segment temp
-// files so a heavy episode never keeps the whole file in RAM.
-func (d *Downloader) downloadParts(baseUrl, representationId *string, set *mpd.AdaptationSet, keys []*widevine.Key) (string, error) {
+// files so a heavy episode never keeps the whole file in RAM. The context aborts
+// the worker pool mid-download (each worker selects on ctx.Done()) and the
+// decrypt pass mid-loop.
+func (d *Downloader) downloadParts(ctx context.Context, baseUrl, representationId *string, set *mpd.AdaptationSet, keys []*widevine.Key) (string, error) {
 	initUrl := buildUrl(*baseUrl, *representationId, *set.SegmentTemplate.Initialization, nil)
-	initData, err := downloadPart(d.HTTP, initUrl)
+	initData, err := downloadPart(ctx, d.HTTP, initUrl)
 	if err != nil {
 		return "", err
 	}
@@ -211,33 +245,56 @@ func (d *Downloader) downloadParts(baseUrl, representationId *string, set *mpd.A
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for job := range jobs {
-				data, err := downloadPart(d.HTTP, job.url)
-				if err != nil {
-					errOnce.Do(func() { downloadErr = err })
+			for {
+				select {
+				case <-ctx.Done():
+					// Cancelled: stop pulling jobs. Surface the cancel error once.
+					errOnce.Do(func() { downloadErr = ctx.Err() })
 					return
+				case job, ok := <-jobs:
+					if !ok {
+						return
+					}
+					data, err := downloadPart(ctx, d.HTTP, job.url)
+					if err != nil {
+						errOnce.Do(func() { downloadErr = err })
+						return
+					}
+					tmp, err := os.CreateTemp("", "crdl-seg-*.mp4")
+					if err != nil {
+						errOnce.Do(func() { downloadErr = err })
+						return
+					}
+					name := tmp.Name()
+					_, err = tmp.Write(data)
+					tmp.Close()
+					if err != nil {
+						os.Remove(name)
+						errOnce.Do(func() { downloadErr = err })
+						return
+					}
+					segFiles[job.index] = name
+					count := done.Add(1)
+					d.Progress.Segment(int(count), total)
 				}
-				tmp, err := os.CreateTemp("", "crdl-seg-*.mp4")
-				if err != nil {
-					errOnce.Do(func() { downloadErr = err })
-					return
-				}
-				name := tmp.Name()
-				_, err = tmp.Write(data)
-				tmp.Close()
-				if err != nil {
-					os.Remove(name)
-					errOnce.Do(func() { downloadErr = err })
-					return
-				}
-				segFiles[job.index] = name
-				count := done.Add(1)
-				d.Progress.Segment(int(count), total)
 			}
 		}()
 	}
 
+	// Produce jobs, but bail out early if the context is already cancelled so we
+	// don't enqueue the full timeline just to discard it.
 	for i, item := range timeline {
+		select {
+		case <-ctx.Done():
+			errOnce.Do(func() { downloadErr = ctx.Err() })
+			// Drain remaining produce into the closed-after channel: close now so
+			// workers exit their range, then wait.
+			close(jobs)
+			wg.Wait()
+			removeFiles(segFiles)
+			return "", ctx.Err()
+		default:
+		}
 		url := buildUrl(*baseUrl, *representationId, *set.SegmentTemplate.Media, &item)
 		jobs <- segmentJob{index: i, url: url}
 	}
@@ -255,7 +312,7 @@ func (d *Downloader) downloadParts(baseUrl, representationId *string, set *mpd.A
 	// file. This keeps only one segment in memory at a time during decryption,
 	// instead of decoding the whole file into RAM like widevine.DecryptMP4Auto.
 	filename := getFilename(set)
-	if err := decryptSegmentsToFile(initData, segFiles, filename, keys); err != nil {
+	if err := decryptSegmentsToFile(ctx, initData, segFiles, filename, keys); err != nil {
 		os.Remove(filename)
 		removeFiles(segFiles)
 		return "", err
@@ -280,7 +337,7 @@ func removeFiles(files []string) {
 // single segment per iteration lets mp4ff resolve the encryption context from
 // the moov (needed for correct senc parsing under both CENC and CBCS) while
 // keeping memory bounded to one segment's mdat instead of the whole file.
-func decryptSegmentsToFile(initData []byte, segFiles []string, outputFile string, keys []*widevine.Key) error {
+func decryptSegmentsToFile(ctx context.Context, initData []byte, segFiles []string, outputFile string, keys []*widevine.Key) error {
 	key, err := drm.ContentKey(keys)
 	if err != nil {
 		return err
@@ -294,6 +351,12 @@ func decryptSegmentsToFile(initData []byte, segFiles []string, outputFile string
 
 	var decryptInfo mp4.DecryptInfo
 	for i, segFile := range segFiles {
+		// The decrypt pass is sequential and can be long; check cancellation
+		// before each segment so a cancelled job exits here too, not only in the
+		// download pool. The partial output file is cleaned up by the caller.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		f, err := os.Open(segFile)
 		if err != nil {
 			return fmt.Errorf("open segment %d: %w", i, err)
@@ -336,8 +399,11 @@ func decryptSegmentsToFile(initData []byte, segFiles []string, outputFile string
 	return nil
 }
 
-func downloadSubs(doer crunchy.Doer, url string) (string, error) {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+func downloadSubs(ctx context.Context, doer crunchy.Doer, url string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", err
 	}
@@ -346,6 +412,9 @@ func downloadSubs(doer crunchy.Doer, url string) (string, error) {
 	req.Header.Set("Referer", "https://static.crunchyroll.com/")
 	resp, err := doer.Do(req)
 	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
 		return "", err
 	}
 	defer resp.Body.Close()
@@ -384,8 +453,15 @@ func downloadSubs(doer crunchy.Doer, url string) (string, error) {
 // downloaded (and thus decrypted) synchronously before the loop advances to
 // version i+1's GetLicense. The video track is downloaded once with version 0's
 // keys.
-func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) error {
+func (d *Downloader) Episode(ctx context.Context, baseContentId string, info media.EpisodeInfo) error {
 	d.ensureSeams()
+
+	// Honour cancellation at the top so a job cancelled before it acquired its
+	// slot (or while queued) exits immediately with the cancel status rather than
+	// beginning real work.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	cleanSeriesTitle := output.Sanitize(info.EpisodeMetadata.SeriesTitle)
 
@@ -531,8 +607,11 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) error
 		d.Progress.Phase("subtitles")
 	}
 	for _, locale := range subsLangs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		d.Progress.Printf("Downloading subtitles for %s...\n", output.TrackTitle(locale))
-		f, err := d.downloadSubtitles(firstEpisode.Subtitles[locale].URL)
+		f, err := d.downloadSubtitles(ctx, firstEpisode.Subtitles[locale].URL)
 		if err != nil {
 			return err
 		}
@@ -546,6 +625,13 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) error
 	var audioTracks []mux.MediaTrack
 
 	for i, version := range versions {
+		// Cancellation boundary between versions: a cancelled job stops here
+		// rather than fetching the next manifest/license. The API methods
+		// themselves don't take a context, so this check (plus the
+		// download-track ctx below) is where cancel takes effect.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		episode := firstEpisode
 		if i > 0 {
 			episode, err = d.API.GetEpisode(version.contentId)
@@ -580,7 +666,7 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) error
 		if audioBaseUrl == nil {
 			return fmt.Errorf("failed to get the audio base URL for %s, maybe the audio quality you entered is wrong?", version.locale)
 		}
-		audioFile, err := d.downloadTrack(audioBaseUrl, audioRepresentationId, audioSet, versionKeys)
+		audioFile, err := d.downloadTrack(ctx, audioBaseUrl, audioRepresentationId, audioSet, versionKeys)
 		if err != nil {
 			return err
 		}
@@ -599,7 +685,7 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) error
 			if baseUrl == nil {
 				return fmt.Errorf("failed to get the video base URL, maybe the video quality you entered is wrong?")
 			}
-			videoFile, err = d.downloadTrack(baseUrl, representationId, videoSet, versionKeys)
+			videoFile, err = d.downloadTrack(ctx, baseUrl, representationId, videoSet, versionKeys)
 			if err != nil {
 				return err
 			}
@@ -612,7 +698,7 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) error
 	}
 
 	d.Progress.Phase("mux")
-	return d.merge(videoFile, audioTracks, subTracks, outputFile, coverFile, d.Format, info)
+	return d.merge(ctx, videoFile, audioTracks, subTracks, outputFile, coverFile, d.Format, info)
 }
 
 // EpisodeInfoFromSeasonEpisode builds the EpisodeInfo the per-episode download
@@ -644,14 +730,17 @@ func EpisodeInfoFromSeasonEpisode(episode media.SeasonEpisode) media.EpisodeInfo
 
 // Season downloads every episode in a season list, building each episode's
 // EpisodeInfo from its SeasonEpisode entry. A failed episode is logged and
-// skipped so one bad episode can't abort the whole season.
+// skipped so one bad episode can't abort the whole season. The CLI never cancels,
+// so it runs each episode under a background context; the per-episode output and
+// skip-and-continue behavior are unchanged.
 func (d *Downloader) Season(episodes []media.SeasonEpisode) error {
 	d.Progress.Printf("Downloading season %v of %s (%v episodes)\n\n", episodes[0].SeasonNumber, episodes[0].SeriesTitle, len(episodes))
 
+	ctx := context.Background()
 	for _, episode := range episodes {
 		info := EpisodeInfoFromSeasonEpisode(episode)
 
-		if err := d.Episode(episode.ID, info); err != nil {
+		if err := d.Episode(ctx, episode.ID, info); err != nil {
 			d.Progress.Printf("! Episode %v failed: %v\n", episode.EpisodeNumber, err)
 			continue
 		}

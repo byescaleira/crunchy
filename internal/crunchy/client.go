@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -17,9 +18,29 @@ import (
 // duplicated across ~9 call sites before this consolidation.
 const UserAgent = "Mozilla/5.0 (X11; Linux x86_64; rv:147.0) Gecko/20100101 Firefox/147.0"
 
+// sharedTransport is the custom Transport every SharedClient request flows
+// through. The zero-value Transport keeps only 2 idle connections per host
+// (DefaultMaxIdleConnsPerHost); the segment downloader runs up to 16 workers
+// against a single CDN host, so without raising this knob keep-alive can't
+// serve the pool and most segment fetches open a brand-new TLS connection — the
+// dominant cause of slow "download segments". 100 idle conns/host lets the pool
+// actually reuse connections; HTTP/2 is attempted so a single multiplexed conn
+// can carry many concurrent requests.
+var sharedTransport = &http.Transport{
+	Proxy:                 http.ProxyFromEnvironment,
+	MaxIdleConns:          256,
+	MaxIdleConnsPerHost:   100,
+	IdleConnTimeout:       90 * time.Second,
+	ForceAttemptHTTP2:     true,
+	TLSHandshakeTimeout:   15 * time.Second,
+	ExpectContinueTimeout: 1 * time.Second,
+}
+
 // SharedClient is the single *http.Client used as the default Doer. Reusing one
 // client keeps connection pooling; creating one per call defeated keep-alive.
-var SharedClient = &http.Client{}
+// It carries sharedTransport so the segment worker pool reuses keep-alive
+// connections instead of opening a new TLS handshake per fetch.
+var SharedClient = &http.Client{Transport: sharedTransport}
 
 // Doer is the HTTP seam: anything that can execute an *http.Request. The real
 // implementation is *http.Client (sharedClient); tests substitute a fake that

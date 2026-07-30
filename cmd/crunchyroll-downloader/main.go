@@ -6,6 +6,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -63,7 +64,7 @@ func processUrl(c *crunchy.Client, url string, d *download.Downloader, seasonNum
 		if err != nil {
 			return err
 		}
-		return d.Episode(contentId, info)
+		return d.Episode(context.Background(), contentId, info)
 	}
 
 	seasons, err := c.GetSeasons(contentId, primaryAudio, primarySubs)

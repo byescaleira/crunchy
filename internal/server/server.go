@@ -8,6 +8,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -89,6 +90,7 @@ type Server struct {
 	buildSeriesTasks func(seriesID string, opts DownloadOpts) ([]jobs.JobSpec, error)
 	outputDir        string
 	cfg              config // single source of truth for persisted prefs (mu-guarded)
+	restartOpts      map[string]DownloadOpts // opts to re-enqueue a job by id (mu-guarded); restart is per-episode
 }
 
 // New creates a Server rooted at dataDir. If etpRt is empty it tries to load it
@@ -100,9 +102,10 @@ func New(dataDir, etpRt string, debug bool) (*Server, error) {
 		return nil, fmt.Errorf("create data dir: %w", err)
 	}
 	s := &Server{
-		dataDir: dataDir,
-		cfgPath: filepath.Join(dataDir, "config.json"),
-		debug:   debug,
+		dataDir:     dataDir,
+		cfgPath:     filepath.Join(dataDir, "config.json"),
+		debug:       debug,
+		restartOpts: map[string]DownloadOpts{},
 	}
 
 	// Always load the saved config so the last-used download prefs (and the
@@ -206,7 +209,7 @@ func (s *Server) persistLastOpts(opts DownloadOpts) {
 // quality/languages, and the session output dir.
 func makeBuildTask(client *crunchy.Client, debug bool, outputDir string) func(string, DownloadOpts) jobs.Task {
 	return func(contentId string, opts DownloadOpts) jobs.Task {
-		return func(p download.Progress) error {
+		return func(ctx context.Context, p download.Progress) error {
 			info, err := client.GetEpisodeInfo(contentId)
 			if err != nil {
 				return err
@@ -222,7 +225,7 @@ func makeBuildTask(client *crunchy.Client, debug bool, outputDir string) func(st
 				Debug:        debug,
 				Progress:     p,
 			}
-			return d.Episode(contentId, info)
+			return d.Episode(ctx, contentId, info)
 		}
 	}
 }
@@ -287,13 +290,15 @@ func seasonEpisodeSpec(client *crunchy.Client, debug bool, ep media.SeasonEpisod
 		EpisodeNumber: ep.EpisodeNumber,
 		GroupID:       groupID,
 		GroupLabel:    groupLabel,
+		RestartKind:   "episode",
+		RestartID:     ep.ID,
 		Task:          seasonEpisodeTask(client, debug, ep, opts),
 	}
 }
 
 // seasonEpisodeTask builds one per-episode Task from a season-episode list entry.
 func seasonEpisodeTask(client *crunchy.Client, debug bool, ep media.SeasonEpisode, opts DownloadOpts) jobs.Task {
-	return func(p download.Progress) error {
+	return func(ctx context.Context, p download.Progress) error {
 		d := &download.Downloader{
 			API:          client,
 			VideoQuality: opts.VideoQuality,
@@ -305,7 +310,7 @@ func seasonEpisodeTask(client *crunchy.Client, debug bool, ep media.SeasonEpisod
 			Debug:        debug,
 			Progress:     p,
 		}
-		return d.Episode(ep.ID, download.EpisodeInfoFromSeasonEpisode(ep))
+		return d.Episode(ctx, ep.ID, download.EpisodeInfoFromSeasonEpisode(ep))
 	}
 }
 
@@ -353,7 +358,11 @@ func (s *Server) enqueue(kind, id string, opts DownloadOpts) ([]*jobs.Job, error
 		if err != nil {
 			return nil, err
 		}
-		return s.manager.EnqueueMany(specs), nil
+		created := s.manager.EnqueueMany(specs)
+		for _, j := range created {
+			s.storeRestart(j.ID, opts)
+		}
+		return created, nil
 	case "series":
 		if buildSeries == nil {
 			return nil, errNotConfigured
@@ -362,21 +371,61 @@ func (s *Server) enqueue(kind, id string, opts DownloadOpts) ([]*jobs.Job, error
 		if err != nil {
 			return nil, err
 		}
-		return s.manager.EnqueueMany(specs), nil
+		created := s.manager.EnqueueMany(specs)
+		for _, j := range created {
+			s.storeRestart(j.ID, opts)
+		}
+		return created, nil
 	default:
 		if buildTask == nil {
 			return nil, errNotConfigured
 		}
 		title, imageURL, season, episode := s.episodeMeta(id)
-		return []*jobs.Job{s.manager.Enqueue(jobs.JobSpec{
+		j := s.manager.Enqueue(jobs.JobSpec{
 			Label:         title,
 			Title:         title,
 			ImageURL:      imageURL,
 			SeasonNumber:  season,
 			EpisodeNumber: episode,
+			RestartKind:   "episode",
+			RestartID:     id,
 			Task:          buildTask(id, opts),
-		})}, nil
+		})
+		s.storeRestart(j.ID, opts)
+		return []*jobs.Job{j}, nil
 	}
+}
+
+// storeRestart remembers the download opts used to create a job so a Restart
+// button can re-enqueue the same target without the original (one-shot) closure.
+// The opts are keyed by job id and guarded by s.mu. They are never persisted to
+// disk — restart is a session-only affordance.
+func (s *Server) storeRestart(id string, opts DownloadOpts) {
+	// Kind/ID on the stored opts are unused (the Job carries RestartKind/RestartID
+	// for the re-enqueue target); keep them blank so a stale field can't misroute
+	// a restart.
+	opts.Kind = ""
+	opts.ID = ""
+	s.mu.Lock()
+	s.restartOpts[id] = opts
+	s.mu.Unlock()
+}
+
+// restartOptsFor returns the stored download opts for a job id (for re-enqueue)
+// and whether any were stored. The map is read under s.mu.
+func (s *Server) restartOptsFor(id string) (DownloadOpts, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	opts, ok := s.restartOpts[id]
+	return opts, ok
+}
+
+// clearRestart drops the stored download opts for a job id once the card is
+// deleted, so the map does not grow unbounded across a long session.
+func (s *Server) clearRestart(id string) {
+	s.mu.Lock()
+	delete(s.restartOpts, id)
+	s.mu.Unlock()
 }
 
 // errNotConfigured is returned by enqueue when no token is on file.
@@ -400,6 +449,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /jobs/list", s.handleJobsList)
 	mux.HandleFunc("GET /jobs/events", s.handleJobsEvents)
 	mux.HandleFunc("GET /jobs/{id}/events", s.handleJobEvents)
+	mux.HandleFunc("POST /jobs/{id}/cancel", s.handleJobCancel)
+	mux.HandleFunc("POST /jobs/{id}/delete", s.handleJobDelete)
+	mux.HandleFunc("POST /jobs/{id}/restart", s.handleJobRestart)
 
 	// JSON API surface (W6). CORS is scoped to these routes only via
 	// s.apiMiddleware (HTML routes are untouched).

@@ -1,23 +1,17 @@
 package web
 
 // Layout is the page chrome shared by every page: the DaisyUI data-theme
-// container, the compiled app.css and htmx.min.js (served from the embedded
-// static FS), the rubber-hose navbar, the shared download-options modal shell,
-// and the theme-toggle + multiplex-SSE + modal-event scripts. Pages pass their
-// body as children via @Layout(...) { ... }.
+// container (dark-only "appletv"), the compiled app.css and htmx.min.js (served
+// from the embedded static FS), the translucent glass top bar, the shared
+// download-options modal shell, and the multiplex-SSE + modal-event scripts.
+// Pages pass their body as children via @Layout(...) { ... }.
 templ Layout(title, active string) {
 	<!DOCTYPE html>
-	<html lang="en" data-theme="rubberhose">
+	<html lang="en" data-theme="appletv">
 		<head>
 			<meta charset="UTF-8"/>
 			<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 			<title>{ title } · Crunchy Downloader</title>
-			<link rel="preconnect" href="https://fonts.googleapis.com"/>
-			<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin=""/>
-			<link
-				rel="stylesheet"
-				href="https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Bungee&family=IBM+Plex+Mono:wght@400;500;700&family=Nunito+Sans:wght@400;600;700;900&display=swap"
-			/>
 			<link rel="stylesheet" href="/static/app.css"/>
 			<script src="/static/htmx.min.js"></script>
 		</head>
@@ -28,21 +22,6 @@ templ Layout(title, active string) {
 			</main>
 			@DownloadModalShell()
 			<script>
-				(function () {
-					var k = "crdl-theme";
-					var t = localStorage.getItem(k);
-					if (t === "rubberhose" || t === "rubberhose-dark") {
-						document.documentElement.setAttribute("data-theme", t);
-					}
-					window.crdlToggleTheme = function () {
-						var cur = document.documentElement.getAttribute("data-theme");
-						var next = cur === "rubberhose-dark" ? "rubberhose" : "rubberhose-dark";
-						document.documentElement.setAttribute("data-theme", next);
-						localStorage.setItem(k, next);
-					};
-				})();
-			</script>
-			<script>
 				// One multiplexed /jobs/events stream drives every job card on the
 				// page (Browse queue, Jobs page). Each SSE event carries the job id
 				// so the handlers dispatch to the matching card. The server sends a
@@ -52,18 +31,20 @@ templ Layout(title, active string) {
 					if (window.__crdlJobs) { return; }
 					window.__crdlJobs = true;
 					var dotColor = {
-						queued: "bg-base-content/30",
+						queued: "bg-white/25",
 						downloading: "bg-primary",
 						muxing: "bg-primary",
 						done: "bg-success",
-						error: "bg-error"
+						error: "bg-error",
+						cancelled: "bg-white/30"
 					};
 					var badgeClass = {
 						queued: "badge-ghost",
-						downloading: "badge-warning",
+						downloading: "badge-primary",
 						muxing: "badge-info",
 						done: "badge-success",
-						error: "badge-error"
+						error: "badge-error",
+						cancelled: "badge-ghost"
 					};
 					var PHASES = ["subtitles", "audio", "video", "mux"];
 					var PHASE_LABELS = {
@@ -73,9 +54,9 @@ templ Layout(title, active string) {
 						mux: "Converting"
 					};
 					var CHIP_BASE = "inline-flex items-center px-1.5 py-0.5 rounded-field font-mono text-[10px] uppercase tracking-wider border transition-colors ";
-					var CHIP_DONE = "border-primary/40 text-primary bg-primary/10";
-					var CHIP_ACTIVE = "border-primary text-primary-content bg-primary rh-blink";
-					var CHIP_PENDING = "border-base-300 text-base-content/40";
+					var CHIP_DONE = "border-primary/30 text-primary/80 bg-primary/10";
+					var CHIP_ACTIVE = "border-primary text-primary-content bg-primary";
+					var CHIP_PENDING = "border-white/10 text-white/35";
 					var phase = {};
 
 					function chipClass(state) {
@@ -117,7 +98,18 @@ templ Layout(title, active string) {
 						}
 						var dot = document.getElementById("job-" + id + "-dot");
 						if (dot) {
-							dot.className = "inline-block h-2.5 w-2.5 rounded-full shrink-0 " + (dotColor[status] || "bg-base-content/30");
+							dot.className = "inline-block h-2 w-2 rounded-full shrink-0 " + (dotColor[status] || "bg-white/25");
+						}
+						// Toggle the per-card control buttons for the new status:
+						//   running (queued/downloading/muxing) shows Cancel;
+						//   terminal (done/error/cancelled) shows Restart + Delete.
+						var card = document.getElementById("job-" + id);
+						if (card) {
+							var running = card.querySelector("[data-controls='running']");
+							var terminal = card.querySelector("[data-controls='terminal']");
+							var isTerminal = status === "done" || status === "error" || status === "cancelled";
+							if (running) { running.style.display = isTerminal ? "none" : ""; }
+							if (terminal) { terminal.style.display = isTerminal ? "" : "none"; }
 						}
 						if (status === "error") {
 							var err = document.getElementById("job-" + id + "-error");
@@ -150,9 +142,18 @@ templ Layout(title, active string) {
 						var d = JSON.parse(e.data);
 						applyStatus(d.id, d.status, d.message);
 						setPct(d.id, 100);
-						if (d.status !== "error") { renderRailDone(d.id); }
+						if (d.status !== "error" && d.status !== "cancelled") { renderRailDone(d.id); }
 						var label = document.getElementById("job-" + d.id + "-phase");
-						if (label) { label.textContent = d.status === "error" ? "Failed" : "Done"; }
+						if (label) {
+							label.textContent = d.status === "error" ? "Failed" : (d.status === "cancelled" ? "Cancelled" : "Done");
+						}
+					});
+					// A removed event drops the whole card from the page (the Manager
+					// deleted a terminal job). No list refresh needed.
+					es.addEventListener("removed", function (e) {
+						var d = JSON.parse(e.data);
+						var card = document.getElementById("job-" + d.id);
+						if (card) { card.remove(); }
 					});
 					// EventSource auto-reconnects on error; the server re-sends a
 					// snapshot on reconnect so state catches up. Nothing to do here.
@@ -193,57 +194,46 @@ templ Layout(title, active string) {
 // backdrop click both work natively).
 templ DownloadModalShell() {
 	<dialog id="download-modal" class="modal">
-		<div class="modal-box bg-base-100 rh-sticker">
+		<div class="modal-box atv-glass rounded-box border border-white/10 shadow-2xl">
 			<div
 				id="download-modal-content"
 				hx-on::after-swap="if(this.querySelector('form')){var d=document.getElementById('download-modal');if(d&&!d.open){d.showModal();}}"
 			></div>
 		</div>
-		<form method="dialog" class="modal-backdrop bg-black/60">
+		<form method="dialog" class="modal-backdrop bg-black/70">
 			<button>close</button>
 		</form>
 	</dialog>
 }
 
-// navbar is the rubber-hose top bar: a hand-drawn film-reel brand mark with the
-// Bungee wordmark, the section links, and a sun/moon theme toggle. A halftone
-// strip + ink rule mark the bottom edge.
+// navbar is the glass top bar: a clean film-reel brand mark with the wordmark,
+// the section links, and nothing else (dark-only — no theme toggle). Translucent
+// backdrop blur keeps the page scrolling under it feel native.
 templ navbar(active string) {
-	<div class="sticky top-0 z-20 bg-base-100/95 backdrop-blur border-b-[3px] border-[var(--rh-edge)]">
+	<div class="sticky top-0 z-20 atv-glass">
 		<div class="container mx-auto max-w-6xl px-4">
 			<div class="navbar min-h-16 gap-2">
 				<div class="navbar-start gap-2 items-center">
-					@iconReel("h-8 w-8 text-primary shrink-0")
-					<span class="font-label uppercase tracking-wider text-lg leading-none">Crunchy Downloader</span>
+					@iconReel("h-7 w-7 text-primary shrink-0")
+					<span class="font-semibold tracking-tight text-base leading-none">Crunchy Downloader</span>
 				</div>
 				<div class="navbar-center gap-1">
 					@navLink("Settings", "/settings", active == "settings")
 					@navLink("Browse", "/browse", active == "browse")
 					@navLink("Jobs", "/jobs", active == "jobs")
 				</div>
-				<div class="navbar-end">
-					<button
-						class="btn btn-ghost btn-sm rh-press"
-						onclick="window.crdlToggleTheme()"
-						title="Toggle light / dark"
-						aria-label="Toggle theme"
-					>
-						@iconTheme("h-5 w-5")
-					</button>
-				</div>
+				<div class="navbar-end"></div>
 			</div>
 		</div>
-		<div class="h-1.5 rh-halftone opacity-60"></div>
 	</div>
 }
 
-// navLink is a section link in the rubber-hose navbar. Bungee uppercase label;
-// the active link sits on a primary tab with an ink underline, inactive links
-// are quiet cream.
+// navLink is a section link in the glass top bar. The active link gets a primary
+// pill; inactive links are quiet off-white.
 templ navLink(label, href string, active bool) {
 	if active {
-		<a class="px-3 py-2 font-label uppercase tracking-wider text-xs text-primary-content bg-primary rounded-t-field border-b-[3px] border-[var(--rh-edge)]" href={ href }>{ label }</a>
+		<a class="px-3.5 py-1.5 text-sm font-medium text-primary-content bg-primary rounded-full" href={ href }>{ label }</a>
 	} else {
-		<a class="px-3 py-2 font-label uppercase tracking-wider text-xs text-base-content/70 hover:text-base-content border-b-[3px] border-transparent" href={ href }>{ label }</a>
+		<a class="px-3.5 py-1.5 text-sm font-medium text-white/60 hover:text-white rounded-full hover:bg-white/5" href={ href }>{ label }</a>
 	}
 }

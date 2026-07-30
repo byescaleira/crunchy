@@ -7,39 +7,37 @@ import (
 	"crunchyroll-downloader/internal/media"
 )
 
-// Alert renders a rubber-hose alert in the broadcast register: an ink-bordered
-// sticker strip with a status dot. kind is one of error/success/warning/info.
-// Exported so the server can render it standalone.
+// Alert renders a clean dark alert strip with a status-tinted left edge. kind
+// is one of error/success/warning/info. Exported so the server can render it
+// standalone.
 templ Alert(kind, msg string) {
-	<div class={ "alert rh-sticker-flat " + alertClass(kind) + " rounded-box" }>
-		<span class="font-mono text-sm">{ msg }</span>
+	<div class={ "alert rounded-box border border-white/10 " + alertClass(kind) }>
+		<span class="text-sm text-white/90">{ msg }</span>
 	</div>
 }
 
-// eyebrow is the broadcast section header: a Bungee uppercase label with a
-// primary rule. It marks a section off without a heavy border — the blocky caps
-// + the rule are the divider.
+// eyebrow is the broadcast section header: a small white/60 uppercase label.
+// Marks a section off without a heavy border.
 templ eyebrow(label string) {
 	<div class="flex items-center gap-2">
-		<span class="font-label text-xs uppercase tracking-wider text-primary/80">{ label }</span>
+		<span class="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45">{ label }</span>
 	</div>
 }
 
 // eyebrowInline is the same eyebrow label without the block treatment, for use
 // inside flex rows (e.g. a card header next to a count).
 templ eyebrowInline(label string) {
-	<span class="font-label text-xs uppercase tracking-wider text-primary/80">{ label }</span>
+	<span class="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45">{ label }</span>
 }
 
 // DownloadButton opens the download-options modal for a granularity (episode /
 // season / series) and a content id. It hx-gets the form into #download-modal-content;
 // the modal is opened by an after-swap listener on that target in DownloadModalShell
-// (htmx fires htmx:afterSwap on the swap target, not on this button). A
-// hand-drawn down-arrow glyph leads the Bungee label; the sticker press-in lands on
-// click.
+// (htmx fires htmx:afterSwap on the swap target, not on this button). A clean
+// primary pill with a down-arrow glyph.
 templ DownloadButton(kind, id string) {
 	<button
-		class="btn btn-primary btn-sm rh-press rounded-field gap-1.5"
+		class="btn btn-primary btn-sm rounded-full gap-1.5"
 		hx-get={ "/downloads/new?kind=" + kind + "&id=" + id }
 		hx-target="#download-modal-content"
 		hx-swap="innerHTML"
@@ -49,84 +47,77 @@ templ DownloadButton(kind, id string) {
 	</button>
 }
 
-// seriesHero is the broadcast card for a series: a portrait poster, the title
-// in display type, metadata chips (launch year, categories, available
-// audio/subtitle locales), the synopsis, and the "Download entire series"
-// action. It anchors the Browse page in real Crunchyroll key art — the one
-// place the panel reads unmistakably as an anime tool. Gracefully empty when the
-// series fetch failed (no title/poster).
+// seriesHero is the cinematic Apple TV hero: a full-bleed 1920×1080 backdrop
+// (PosterWide) with a bottom-up dark scrim, the series title + metadata + the
+// "Download entire series" action overlaid at the bottom. It anchors the Browse
+// page in real Crunchyroll key art. Gracefully degrades to a plain titled
+// surface when the series fetch failed (no title/poster).
 templ seriesHero(series media.Series, seriesID string) {
-	<div class="card bg-base-100 rh-sticker rounded-box overflow-hidden">
-		<div class="card-body flex-row gap-4 p-4">
-			if img, ok := media.BestImage(series.Images.PosterTall); ok && img.Source != "" {
-				<img
-					src={ img.Source }
-					alt={ series.Title }
-					class="w-28 md:w-36 rounded-box object-cover shrink-0 border-2 border-[var(--rh-edge)]"
-					loading="lazy"
-				/>
-			}
-			<div class="min-w-0 flex flex-col gap-2">
-				<span class="font-label text-xs uppercase tracking-wider text-primary/80">Series</span>
-				<h2 class="font-display uppercase text-2xl md:text-3xl leading-tight">
-					if series.Title != "" {
-						{ series.Title }
-					} else {
-						Download this series
-					}
-				</h2>
+	{{ src := ""; if img, ok := media.BestImage(series.Images.PosterWide); ok { src = img.Source } }}
+	<div class="relative w-full aspect-video rounded-box overflow-hidden atv-card border-0">
+		if src != "" {
+			<img src={ src } alt={ series.Title } class="absolute inset-0 w-full h-full object-cover" loading="lazy"/>
+		} else {
+			<div class="absolute inset-0 bg-base-300"></div>
+		}
+		<div class="absolute inset-0 atv-hero-scrim"></div>
+		<div class="relative z-10 h-full flex flex-col justify-end p-6 md:p-10 gap-3">
+			<span class="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/70">Series</span>
+			<h2 class="font-display text-3xl md:text-5xl font-semibold tracking-tight text-white drop-shadow-lg leading-tight">
 				if series.Title != "" {
-					<div class="flex flex-wrap gap-1.5">
-						if series.SeriesLaunchYear != 0 {
-							<span class="badge badge-ghost badge-sm font-mono">{ series.SeriesLaunchYear }</span>
-						}
-						for _, c := range series.TenantCategories {
-							<span class="badge badge-ghost badge-sm">{ c }</span>
-						}
-						for _, l := range series.AudioLocales {
-							<span class="badge badge-outline badge-sm font-mono">{ l }</span>
-						}
-					</div>
-					if series.Description != "" {
-						<p class="text-sm text-base-content/70 line-clamp-3">{ series.Description }</p>
-					}
+					{ series.Title }
+				} else {
+					Download this series
 				}
-				<div class="mt-1">
-					@DownloadButton("series", seriesID)
+			</h2>
+			if series.Title != "" {
+				<div class="flex flex-wrap gap-2 items-center">
+					if series.SeriesLaunchYear != 0 {
+						<span class="px-2 py-0.5 rounded-full text-xs font-medium bg-white/15 text-white backdrop-blur-sm">{ series.SeriesLaunchYear }</span>
+					}
+					for _, c := range series.TenantCategories {
+						<span class="px-2 py-0.5 rounded-full text-xs bg-white/10 text-white/80">{ c }</span>
+					}
 				</div>
+				if series.Description != "" {
+					<p class="text-sm text-white/75 line-clamp-2 max-w-2xl drop-shadow">{ series.Description }</p>
+				}
+			}
+			<div class="mt-2">
+				@DownloadButton("series", seriesID)
 			</div>
 		</div>
 	</div>
 }
 
-// seasonCard renders one season as a "program log" row: a mono season number
-// (the channel marker), the season title, episode count, audio-locale chips, and
+// seasonCard renders one season as a clean hover row inside the seasons list: a
+// mono season number, the season title, episode count, audio-locale chips, and
 // the View / Download-season actions.
 templ seasonCard(s media.Season) {
-	<div class="flex items-center gap-3 py-2.5 border-b border-base-300/70 last:border-b-0">
-		<span class="font-mono text-sm text-primary/80 w-10 shrink-0">S{ s.SeasonNumber }</span>
+	<div class="flex items-center gap-3 py-3 border-b border-white/8 last:border-b-0">
+		<span class="font-mono text-sm text-white/45 w-10 shrink-0">S{ s.SeasonNumber }</span>
 		<div class="min-w-0 flex-1">
 			<div class="flex items-baseline gap-2 flex-wrap">
 				if s.Title != "" {
-					<span class="font-medium truncate">{ s.Title }</span>
+					<span class="font-medium text-white/90 truncate">{ s.Title }</span>
 				} else {
-					<span class="font-medium">Season { s.SeasonNumber }</span>
+					<span class="font-medium text-white/90">Season { s.SeasonNumber }</span>
 				}
 				if s.NumberOfEpisodes > 0 {
-					<span class="font-mono text-xs text-base-content/50">{ s.NumberOfEpisodes } ep</span>
+					<span class="font-mono text-xs text-white/40">{ s.NumberOfEpisodes } ep</span>
 				}
 			</div>
 			if len(s.AudioLocales) > 0 {
-				<div class="flex flex-wrap gap-1 mt-0.5">
+				<div class="flex flex-wrap gap-1 mt-1">
 					for _, l := range s.AudioLocales {
-						<span class="badge badge-outline badge-xs font-mono">{ l }</span>
+						<span class="px-1.5 py-0.5 rounded-full text-[10px] font-mono text-white/55 bg-white/5 border border-white/10">{ l }</span>
 					}
 				</div>
 			}
 		</div>
-		<div class="flex gap-1 shrink-0">
+		<div class="flex gap-1.5 shrink-0">
 			<button
-				class="btn btn-ghost btn-sm rh-press rounded-field gap-1.5 text-xs"
+				class="btn btn-ghost btn-sm rounded-full gap-1.5 text-xs"
 				hx-get={ "/season/" + s.ID + "/episodes" }
 				hx-target="#episodes"
 			>
@@ -138,29 +129,29 @@ templ seasonCard(s media.Season) {
 	</div>
 }
 
-// episodeCard renders one episode as a TV-guide card: a thumbnail, the mono
-// episode number, title, duration, air date, a premium badge, and the per-row
+// episodeCard renders one episode as a media-forward Apple TV card: a thumbnail
+// on top, then the mono episode number + duration, title, meta, and the per-row
 // Download button. Replaces the old checkbox table row.
 templ episodeCard(ep media.SeasonEpisode) {
-	<div class="card bg-base-100 rh-sticker rounded-box overflow-hidden">
+	<div class="atv-card atv-lift rounded-box overflow-hidden">
 		if img, ok := media.BestImage(ep.Images.Thumbnail); ok && img.Source != "" {
 			<img src={ img.Source } alt={ ep.Title } class="w-full aspect-video object-cover" loading="lazy"/>
 		} else {
-			<div class="w-full aspect-video bg-base-300/60 flex items-center justify-center">
-				<span class="font-mono text-2xl text-base-content/30">E{ ep.EpisodeNumber }</span>
+			<div class="w-full aspect-video bg-base-300/70 flex items-center justify-center">
+				<span class="font-mono text-2xl text-white/25">E{ ep.EpisodeNumber }</span>
 			</div>
 		}
-		<div class="card-body gap-1.5 p-3">
+		<div class="p-3 flex flex-col gap-1.5">
 			<div class="flex items-center justify-between gap-2">
-				<span class="font-mono text-xs text-primary/80">E{ ep.EpisodeNumber }</span>
+				<span class="font-mono text-xs text-primary">E{ ep.EpisodeNumber }</span>
 				if d := formatDuration(ep.DurationMS); d != "" {
-					<span class="font-mono text-xs text-base-content/50">{ d }</span>
+					<span class="font-mono text-xs text-white/40">{ d }</span>
 				}
 			</div>
-			<h3 class="font-display text-base leading-tight truncate" title={ ep.Title }>{ ep.Title }</h3>
+			<h3 class="font-display text-sm leading-tight truncate text-white/90" title={ ep.Title }>{ ep.Title }</h3>
 			<div class="flex flex-wrap items-center gap-1.5">
 				if d := airDate(ep.EpisodeAirDate); d != "" {
-					<span class="font-mono text-xs text-base-content/40">{ d }</span>
+					<span class="font-mono text-xs text-white/40">{ d }</span>
 				}
 				if ep.IsPremiumOnly {
 					<span class="badge badge-warning badge-sm font-mono">Premium</span>
@@ -169,7 +160,7 @@ templ episodeCard(ep media.SeasonEpisode) {
 			if locs := audioLocales(ep); len(locs) > 0 {
 				<div class="flex flex-wrap gap-1 mt-0.5">
 					for _, l := range locs {
-						<span class="badge badge-outline badge-xs font-mono">{ l }</span>
+						<span class="px-1.5 py-0.5 rounded-full text-[10px] font-mono text-white/55 bg-white/5 border border-white/10">{ l }</span>
 					}
 				</div>
 			}
@@ -185,15 +176,12 @@ templ statusBadge(s jobs.Status) {
 	<span class={ "badge " + statusBadgeClass(string(s)) + " badge-sm font-mono" }>{ string(s) }</span>
 }
 
-// jobProgress renders a job's live progress: a phase-weighted bar with a mono
+// jobProgress renders a job's live progress: a slim atv-bar with a mono
 // percentage, a four-step phase rail (SUB · AUDIO · VIDEO · MUX) that lights up
-// as each download phase starts, and a phase-label line that reads like the
-// current phase ("Fetching subtitles", "Downloading audio", "Downloading
-// segments", "Converting"). The bar climbs 0-90 across subtitles/audio/video,
-// sits at 90 through mux, and the done event fills it to 100. Completed chips
-// dim-fill primary, the active chip is a calm solid primary (no blink — the page
-// script adds a gentle rh-blink flutter when the phase goes live), future chips
-// stay muted.
+// as each download phase starts, and a phase-label line. The bar climbs 0-90
+// across subtitles/audio/video, sits at 90 through mux, and the done event fills
+// it to 100. The active chip is a solid primary pill; completed chips dim-fill
+// primary; future chips stay muted.
 templ jobProgress(j *jobs.Job) {
 	{{
 		done, total := j.Segment()
@@ -209,36 +197,87 @@ templ jobProgress(j *jobs.Job) {
 				label = "Done"
 			case "error":
 				label = "Failed"
+			case "cancelled":
+				label = "Cancelled"
 			default:
 				label = "queued"
 			}
 		}
 	}}
-	<div class="flex items-center gap-2">
-		<progress class="progress progress-primary flex-1" value={ pct } max="100"></progress>
-		<span class="font-mono text-xs text-base-content/60 tabular-nums w-10 text-right" id={ "job-" + j.ID + "-pct" }>{ fmt.Sprintf("%d%%", pct) }</span>
+	<div class="flex items-center gap-2.5">
+		<progress class="progress atv-bar flex-1" value={ pct } max="100" id={ "job-" + j.ID + "-bar" }></progress>
+		<span class="font-mono text-xs text-white/45 tabular-nums w-10 text-right" id={ "job-" + j.ID + "-pct" }>{ fmt.Sprintf("%d%%", pct) }</span>
 	</div>
-	<div class="flex items-center gap-1.5 mt-1.5">
+	<div class="flex items-center gap-1.5 mt-2">
 		for _, key := range phaseOrder {
 			<span class={ phaseChipClass(string(j.Status()), phase, key) } data-phase={ key } id={ "job-" + j.ID + "-chip-" + key }>{ phaseChipLabel(key) }</span>
 		}
 	</div>
-	<div class="font-mono text-xs text-primary/70 mt-1" id={ "job-" + j.ID + "-phase" }>{ label }</div>
+	<div class="font-mono text-xs text-primary/70 mt-1.5" id={ "job-" + j.ID + "-phase" }>{ label }</div>
+}
+
+// jobControls renders the per-card action buttons. Running jobs show Cancel;
+// terminal jobs (done/error/cancelled) show Restart + Delete. The two groups are
+// tagged data-controls="running"/"terminal" so the SSE script toggles them live
+// as the status changes (the server renders the right one initially based on
+// the current status). All three are plain HTML POST routes (not /api/*), so
+// CORS is unchanged. Restart + Delete use htmx Out-of-Band swaps to refresh the
+// queue; Cancel relies on the SSE status event to flip the card to "cancelled".
+templ jobControls(j *jobs.Job) {
+	{{
+		isTerminal := j.Status() == jobs.StatusDone || j.Status() == jobs.StatusError || j.Status() == jobs.StatusCancelled
+	}}
+	if isTerminal {
+		<div class="flex items-center gap-1.5" data-controls="terminal">
+			<button
+				class="btn btn-ghost btn-xs rounded-full gap-1 text-white/70 hover:text-white"
+				hx-post={ "/jobs/" + j.ID + "/restart" }
+				hx-target="#download-queue"
+				hx-swap="innerHTML"
+				title="Restart this episode"
+			>
+				@iconRestart("h-3.5 w-3.5")
+				<span>Restart</span>
+			</button>
+			<button
+				class="btn btn-ghost btn-xs rounded-full gap-1 text-white/70 hover:text-error"
+				hx-post={ "/jobs/" + j.ID + "/delete" }
+				hx-target="#download-queue"
+				hx-swap="innerHTML"
+				title="Remove this card"
+			>
+				@iconTrash("h-3.5 w-3.5")
+				<span>Delete</span>
+			</button>
+		</div>
+	} else {
+		<div class="flex items-center gap-1.5" data-controls="running">
+			<button
+				class="btn btn-ghost btn-xs rounded-full gap-1 text-white/70 hover:text-error"
+				hx-post={ "/jobs/" + j.ID + "/cancel" }
+				title="Cancel this download"
+			>
+				@iconCancel("h-3.5 w-3.5")
+				<span>Cancel</span>
+			</button>
+		</div>
+	}
 }
 
 // jobCard renders one job as a card: the episode thumbnail, a series · S##E##
-// eyebrow, the episode title, a status badge, a progress bar, and an error line
-// if it failed. The card's id lets the SSE handler target it for swaps;
-// data-job-sse opts the card into the multiplexed /jobs/events script, and the
-// dot/status/progress/phase element ids let that script update them live.
+// eyebrow, the episode title, a status badge, a slim progress bar, an error line
+// if it failed, and the per-card Cancel/Restart/Delete controls. The card's id
+// lets the SSE handler target it for swaps; data-job-sse opts the card into the
+// multiplexed /jobs/events script, and the dot/status/progress/phase element ids
+// let that script update them live.
 templ jobCard(j *jobs.Job) {
-	<div class="flex flex-col gap-1 py-2.5 border-b border-base-300/70 last:border-b-0" id={ "job-" + j.ID } data-job-sse={ j.ID }>
+	<div class="flex flex-col gap-1.5 py-3 border-b border-white/8 last:border-b-0" id={ "job-" + j.ID } data-job-sse={ j.ID }>
 		<div class="flex items-start gap-3">
 			if j.ImageURL != "" {
-				<img src={ j.ImageURL } alt={ jobDisplayTitle(j) } class="w-24 aspect-video object-cover rounded shrink-0 border-2 border-[var(--rh-edge)] bg-base-300/40" loading="lazy"/>
+				<img src={ j.ImageURL } alt={ jobDisplayTitle(j) } class="w-28 aspect-video object-cover rounded-lg shrink-0 bg-base-300/40" loading="lazy"/>
 			} else {
-				<div class="w-24 aspect-video bg-base-300/50 flex items-center justify-center shrink-0 rounded border-2 border-[var(--rh-edge)]">
-					<span class="font-mono text-sm text-base-content/30">E{ j.EpisodeNumber }</span>
+				<div class="w-28 aspect-video bg-base-300/60 flex items-center justify-center shrink-0 rounded-lg">
+					<span class="font-mono text-sm text-white/25">E{ j.EpisodeNumber }</span>
 				</div>
 			}
 			<div class="min-w-0 flex-1 flex flex-col gap-1">
@@ -248,17 +287,18 @@ templ jobCard(j *jobs.Job) {
 						class={ "inline-block h-2 w-2 rounded-full shrink-0 " + statusDotClass(j.Status()) }
 					></span>
 					if eb := jobEyebrow(j); eb != "" {
-						<span class="font-mono text-[10px] uppercase tracking-wider text-primary/70 truncate">{ eb }</span>
+						<span class="font-mono text-[10px] uppercase tracking-wider text-white/40 truncate">{ eb }</span>
 					}
 					<span class={ "badge " + statusBadgeClass(string(j.Status())) + " badge-sm font-mono shrink-0 ml-auto" } id={ "job-" + j.ID + "-status" }>{ string(j.Status()) }</span>
 				</div>
-				<h3 class="font-display text-sm leading-tight truncate" title={ j.Label }>{ jobDisplayTitle(j) }</h3>
+				<h3 class="font-display text-sm leading-tight truncate text-white/90" title={ j.Label }>{ jobDisplayTitle(j) }</h3>
+				@jobControls(j)
 			</div>
 		</div>
-		<div id={ "job-" + j.ID + "-progress" } class="pl-[7.5rem]">
+		<div id={ "job-" + j.ID + "-progress" }>
 			@jobProgress(j)
 		</div>
-		<div id={ "job-" + j.ID + "-error" } class="pl-[7.5rem]">
+		<div id={ "job-" + j.ID + "-error" }>
 			if j.Status() == "error" {
 				<div class="text-xs text-error font-mono break-all">{ j.Error() }</div>
 			}
@@ -289,7 +329,7 @@ func jobEyebrow(j *jobs.Job) string {
 }
 
 // statusDotClass maps a job status to the dot color: primary while active, green
-// done, red error, muted neutral queued.
+// done, red error, muted neutral queued/cancelled.
 func statusDotClass(s jobs.Status) string {
 	switch string(s) {
 	case "downloading", "muxing":
@@ -299,7 +339,7 @@ func statusDotClass(s jobs.Status) string {
 	case "error":
 		return "bg-error"
 	default:
-		return "bg-base-content/30"
+		return "bg-white/25"
 	}
 }
 
@@ -350,15 +390,14 @@ func phaseIndex(phase string) int {
 
 // phaseChipClass returns the rail chip class for a phase key given the job's
 // status and current phase. Completed chips dim-fill primary, the active chip is
-// a solid primary (no blink — the page script adds the rh-blink flutter when
-// the phase goes live), future chips stay muted. A done job shows every chip
-// completed; an error job shows the phases that already ran as completed and
-// leaves the rest muted (it failed mid-phase).
+// a solid primary, future chips stay muted. A done job shows every chip
+// completed; an error/cancelled job shows the phases that already ran as
+// completed and leaves the rest muted (it failed mid-phase).
 func phaseChipClass(status, current, key string) string {
-	const base = "inline-flex items-center px-1.5 py-0.5 rounded-field font-mono text-[10px] uppercase tracking-wider border transition-colors "
-	const done = "border-primary/40 text-primary bg-primary/10"
+	const base = "inline-flex items-center px-1.5 py-0.5 rounded-full font-mono text-[10px] uppercase tracking-wider border transition-colors "
+	const done = "border-primary/30 text-primary/80 bg-primary/10"
 	const active = "border-primary text-primary-content bg-primary"
-	const pending = "border-base-300 text-base-content/40"
+	const pending = "border-white/10 text-white/35"
 
 	ki := phaseIndex(key)
 	if ki < 0 {

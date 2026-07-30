@@ -14,6 +14,7 @@ func TestStatusBadgeClass(t *testing.T) {
 		"muxing":      "badge-info",
 		"done":        "badge-success",
 		"error":       "badge-error",
+		"cancelled":   "badge-ghost",
 		"unknown":     "badge-ghost",
 	}
 	for in, want := range cases {

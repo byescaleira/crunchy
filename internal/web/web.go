@@ -31,6 +31,8 @@ func statusBadgeClass(s string) string {
 		return "badge-success"
 	case "error":
 		return "badge-error"
+	case "cancelled":
+		return "badge-ghost"
 	default:
 		return "badge-ghost"
 	}

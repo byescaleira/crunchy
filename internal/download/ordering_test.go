@@ -1,6 +1,7 @@
 package download
 
 import (
+	"context"
 	"os"
 	"reflect"
 	"strings"
@@ -108,7 +109,7 @@ func TestDownloadEpisode_VersionKeyOrdering(t *testing.T) {
 		AudioLangs:   []string{"ja-JP", "en-US"},
 		// no subtitles: keeps the test off the subtitle I/O path
 	}
-	d.downloadTrack = func(baseUrl, representationId *string, set *mpd.AdaptationSet, keys []*widevine.Key) (string, error) {
+	d.downloadTrack = func(ctx context.Context, baseUrl, representationId *string, set *mpd.AdaptationSet, keys []*widevine.Key) (string, error) {
 		kind := "audio"
 		if strings.HasPrefix(set.MimeType, "video") {
 			kind = "video"
@@ -116,8 +117,8 @@ func TestDownloadEpisode_VersionKeyOrdering(t *testing.T) {
 		api.record(event{kind: kind, keys: keys})
 		return "track-" + kind, nil
 	}
-	d.downloadSubtitles = func(url string) (string, error) { return "subs.ass", nil }
-	d.merge = func(videoFile string, audioTracks, subTracks []mux.MediaTrack, outputFile, coverFile, format string, info media.EpisodeInfo) error {
+	d.downloadSubtitles = func(ctx context.Context, url string) (string, error) { return "subs.ass", nil }
+	d.merge = func(ctx context.Context, videoFile string, audioTracks, subTracks []mux.MediaTrack, outputFile, coverFile, format string, info media.EpisodeInfo) error {
 		api.record(event{kind: "merge"})
 		return nil
 	}
@@ -133,7 +134,7 @@ func TestDownloadEpisode_VersionKeyOrdering(t *testing.T) {
 		},
 	}
 
-	if err := d.Episode("baseId", info); err != nil {
+	if err := d.Episode(context.Background(), "baseId", info); err != nil {
 		t.Fatalf("Episode returned error: %v (events: %v)", err, eventKinds(api.events))
 	}
 

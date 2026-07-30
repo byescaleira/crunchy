@@ -8,6 +8,7 @@ package mux
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -197,11 +198,14 @@ func maturityOf(m media.EpisodeMetadata) string {
 
 // Merge merges the video, all audio tracks, all subtitle tracks and (optionally)
 // a cover into a single container. It returns an error (instead of panicking)
-// when ffmpeg fails, so the caller can clean up and report.
-func Merge(videoFile string, audioTracks, subTracks []MediaTrack, outputFile, coverFile, format string, info media.EpisodeInfo) error {
+// when ffmpeg fails, so the caller can clean up and report. The context lets a
+// cancelled job SIGTERM ffmpeg mid-mux (CommandContext sends the process-killing
+// signal when ctx is cancelled); under a non-cancelled context it behaves
+// identically to exec.Command, so the CLI output is unchanged.
+func Merge(ctx context.Context, videoFile string, audioTracks, subTracks []MediaTrack, outputFile, coverFile, format string, info media.EpisodeInfo) error {
 	args := BuildMergeArgs(videoFile, audioTracks, subTracks, outputFile, coverFile, format, info)
 
-	cmd := exec.Command("ffmpeg", args...)
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {

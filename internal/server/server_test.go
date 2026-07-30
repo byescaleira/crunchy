@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -61,9 +62,10 @@ func newTestServer(t *testing.T) *Server {
 	t.Helper()
 	dir := t.TempDir()
 	return &Server{
-		manager: jobs.NewManager(3),
-		dataDir: dir,
-		cfgPath: filepath.Join(dir, "config.json"),
+		manager:     jobs.NewManager(3),
+		dataDir:      dir,
+		cfgPath:      filepath.Join(dir, "config.json"),
+		restartOpts:  map[string]DownloadOpts{},
 	}
 }
 
@@ -279,7 +281,7 @@ func TestDownloadNew_RendersForm(t *testing.T) {
 
 func TestDownloadPost_NoAudio(t *testing.T) {
 	s := newTestServer(t)
-	s.buildTask = func(string, DownloadOpts) jobs.Task { return func(download.Progress) error { return nil } }
+	s.buildTask = func(string, DownloadOpts) jobs.Task { return func(context.Context, download.Progress) error { return nil } }
 	h := s.Handler()
 	// kind=episode, an id, but no audio language checked.
 	r, w := postForm("/downloads", "kind=episode&id=ep1&videoQuality=1080p")
@@ -302,7 +304,7 @@ func TestDownloadPost_NoAudio(t *testing.T) {
 
 func TestDownloadPost_Episode(t *testing.T) {
 	s := newTestServer(t)
-	s.buildTask = func(string, DownloadOpts) jobs.Task { return func(download.Progress) error { return nil } }
+	s.buildTask = func(string, DownloadOpts) jobs.Task { return func(context.Context, download.Progress) error { return nil } }
 	h := s.Handler()
 	r, w := postForm("/downloads",
 		"kind=episode&id=ep1&videoQuality=1080p&audioQuality=192k&audioLangs=ja-JP&subsLangs=en-US&format=mkv")
@@ -384,8 +386,8 @@ func TestDownloadPost_Season(t *testing.T) {
 			t.Errorf("buildSeasonTasks got id %q, want SEASON2", seasonID)
 		}
 		return []jobs.JobSpec{
-			{Label: "S02E01 — A", Title: "A", SeriesTitle: "Frieren", SeasonNumber: 2, EpisodeNumber: 1, GroupID: "SEASON2", GroupLabel: "Frieren — Season 2", Task: func(download.Progress) error { return nil }},
-			{Label: "S02E02 — B", Title: "B", SeriesTitle: "Frieren", SeasonNumber: 2, EpisodeNumber: 2, GroupID: "SEASON2", GroupLabel: "Frieren — Season 2", Task: func(download.Progress) error { return nil }},
+			{Label: "S02E01 — A", Title: "A", SeriesTitle: "Frieren", SeasonNumber: 2, EpisodeNumber: 1, GroupID: "SEASON2", GroupLabel: "Frieren — Season 2", Task: func(context.Context, download.Progress) error { return nil }},
+			{Label: "S02E02 — B", Title: "B", SeriesTitle: "Frieren", SeasonNumber: 2, EpisodeNumber: 2, GroupID: "SEASON2", GroupLabel: "Frieren — Season 2", Task: func(context.Context, download.Progress) error { return nil }},
 		}, nil
 	}
 	h := s.Handler()
@@ -410,9 +412,9 @@ func TestDownloadPost_Series(t *testing.T) {
 	s := newTestServer(t)
 	s.buildSeriesTasks = func(seriesID string, opts DownloadOpts) ([]jobs.JobSpec, error) {
 		return []jobs.JobSpec{
-			{Label: "a", Task: func(download.Progress) error { return nil }},
-			{Label: "b", Task: func(download.Progress) error { return nil }},
-			{Label: "c", Task: func(download.Progress) error { return nil }},
+			{Label: "a", Task: func(context.Context, download.Progress) error { return nil }},
+			{Label: "b", Task: func(context.Context, download.Progress) error { return nil }},
+			{Label: "c", Task: func(context.Context, download.Progress) error { return nil }},
 		}, nil
 	}
 	h := s.Handler()
@@ -448,8 +450,8 @@ func TestDownloadPost_SeasonDiscoveryFails(t *testing.T) {
 
 func TestJobsList(t *testing.T) {
 	s := newTestServer(t)
-	s.buildTask = func(string, DownloadOpts) jobs.Task { return func(download.Progress) error { return nil } }
-	s.manager.Enqueue(jobs.JobSpec{Label: "ep1", Title: "Pilot", Task: func(download.Progress) error { return nil }})
+	s.buildTask = func(string, DownloadOpts) jobs.Task { return func(context.Context, download.Progress) error { return nil } }
+	s.manager.Enqueue(jobs.JobSpec{Label: "ep1", Title: "Pilot", Task: func(context.Context, download.Progress) error { return nil }})
 
 	h := s.Handler()
 	r, w := get("/jobs/list")
@@ -459,11 +461,131 @@ func TestJobsList(t *testing.T) {
 	}
 }
 
+// TestJobsList_ControlButtons asserts the job card renders the per-card control
+// buttons: Cancel while a job is queued/running, Restart + Delete once terminal.
+// The data-controls attribute lets the SSE script toggle the two groups live.
+func TestJobsList_ControlButtons(t *testing.T) {
+	s := newTestServer(t)
+	started := make(chan struct{})
+	running := s.manager.Enqueue(jobs.JobSpec{
+		Label: "running", Title: "R", RestartKind: "episode", RestartID: "epR",
+		Task: func(ctx context.Context, p download.Progress) error {
+			close(started)
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	})
+	<-started
+	done := s.manager.Enqueue(jobs.JobSpec{
+		Label: "done", Title: "D", RestartKind: "episode", RestartID: "epD",
+		Task: func(context.Context, download.Progress) error { return nil },
+	})
+	<-done.Done()
+
+	h := s.Handler()
+	r, w := get("/jobs/list")
+	got := body(t, h, r, w)
+	// Running card shows Cancel (data-controls="running"); terminal card shows
+	// Restart + Delete (data-controls="terminal").
+	if !strings.Contains(got, "/jobs/"+running.ID+"/cancel") {
+		t.Errorf("running card missing Cancel button; got: %s", got)
+	}
+	if !strings.Contains(got, "/jobs/"+done.ID+"/restart") || !strings.Contains(got, "/jobs/"+done.ID+"/delete") {
+		t.Errorf("terminal card missing Restart/Delete buttons; got: %s", got)
+	}
+	if !strings.Contains(got, `data-controls="running"`) || !strings.Contains(got, `data-controls="terminal"`) {
+		t.Errorf("control groups missing data-controls tags; got: %s", got)
+	}
+
+	// Cancel the running job via its route so the test cleans up its goroutine.
+	rc, wc := postForm("/jobs/"+running.ID+"/cancel", "")
+	h.ServeHTTP(wc, rc)
+	if wc.Code != http.StatusOK {
+		t.Errorf("cancel route status = %d, want 200", wc.Code)
+	}
+	<-running.Done()
+}
+
+// TestJobRoutes_Wiring exercises the cancel/delete/restart HTML routes end to
+// end through the handler: cancel aborts a running job, delete removes a
+// terminal one (and clears stored restart opts), restart re-enqueues from the
+// stored opts. These are HTML POST routes (no CORS), scoped away from /api/*.
+func TestJobRoutes_Wiring(t *testing.T) {
+	s := newTestServer(t)
+	s.buildTask = func(string, DownloadOpts) jobs.Task {
+		return func(ctx context.Context, p download.Progress) error {
+			<-ctx.Done()
+			return ctx.Err()
+		}
+	}
+	h := s.Handler()
+
+	// Enqueue via the form so restartOpts is populated for the job id.
+	r, w := postForm("/downloads", "kind=episode&id=ep1&videoQuality=720p&audioLangs=ja-JP&subsLangs=en-US&format=mkv")
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("enqueue status = %d, body %s", w.Code, w.Body.String())
+	}
+	js := s.manager.List()
+	if len(js) != 1 {
+		t.Fatalf("expected 1 enqueued job, got %d", len(js))
+	}
+	id := js[0].ID
+
+	// Cancel the running job via its route.
+	rc, wc := postForm("/jobs/"+id+"/cancel", "")
+	h.ServeHTTP(wc, rc)
+	if wc.Code != http.StatusOK {
+		t.Fatalf("cancel status = %d, want 200", wc.Code)
+	}
+	<-js[0].Done()
+	if j, ok := s.manager.Get(id); !ok || j.Status() != jobs.StatusCancelled {
+		t.Fatalf("after cancel, job status = %v (ok=%v), want cancelled", statusOr(j), ok)
+	}
+
+	// Restart the (now cancelled) job via its route: storeRestart kept the opts,
+	// so a fresh job is enqueued targeting the same episode.
+	rr, wr := postForm("/jobs/"+id+"/restart", "")
+	h.ServeHTTP(wr, rr)
+	if wr.Code != http.StatusOK {
+		t.Fatalf("restart status = %d, want 200 (body %s)", wr.Code, wr.Body.String())
+	}
+	if n := len(s.manager.List()); n != 2 {
+		t.Errorf("after restart, expected 2 jobs (old + new), got %d", n)
+	}
+	// Cancel the newly-enqueued job so the test doesn't leak a goroutine.
+	for _, j := range s.manager.List() {
+		s.manager.Cancel(j.ID)
+		<-j.Done()
+	}
+
+	// Delete the terminal job via its route.
+	rd, wd := postForm("/jobs/"+id+"/delete", "")
+	h.ServeHTTP(wd, rd)
+	if wd.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, want 200", wd.Code)
+	}
+	if _, ok := s.manager.Get(id); ok {
+		t.Errorf("job still present after delete")
+	}
+	if _, ok := s.restartOptsFor(id); ok {
+		t.Errorf("restart opts not cleared after delete")
+	}
+}
+
+// statusOr returns the job's status string, or "<nil>" for a nil job (test helper).
+func statusOr(j *jobs.Job) string {
+	if j == nil {
+		return "<nil>"
+	}
+	return string(j.Status())
+}
+
 // TestJobsList_PhaseRail asserts the job card renders the phase rail chips, the
 // percentage span, and the phase-label line that the SSE script drives.
 func TestJobsList_PhaseRail(t *testing.T) {
 	s := newTestServer(t)
-	s.manager.Enqueue(jobs.JobSpec{Label: "ep1", Task: func(download.Progress) error { return nil }})
+	s.manager.Enqueue(jobs.JobSpec{Label: "ep1", Task: func(context.Context, download.Progress) error { return nil }})
 	h := s.Handler()
 	r, w := get("/jobs/list")
 	got := body(t, h, r, w)
@@ -487,9 +609,9 @@ func TestJobsList_PhaseRail(t *testing.T) {
 // header (the GroupLabel), and a standalone episode (no GroupID) renders no header.
 func TestJobsList_GroupHeader(t *testing.T) {
 	s := newTestServer(t)
-	s.manager.Enqueue(jobs.JobSpec{Label: "S02E01 — A", Title: "A", GroupID: "SEASON2", GroupLabel: "Frieren — Season 2", Task: func(download.Progress) error { return nil }})
-	s.manager.Enqueue(jobs.JobSpec{Label: "S02E02 — B", Title: "B", GroupID: "SEASON2", GroupLabel: "Frieren — Season 2", Task: func(download.Progress) error { return nil }})
-	s.manager.Enqueue(jobs.JobSpec{Label: "ep-x", Title: "X", Task: func(download.Progress) error { return nil }})
+	s.manager.Enqueue(jobs.JobSpec{Label: "S02E01 — A", Title: "A", GroupID: "SEASON2", GroupLabel: "Frieren — Season 2", Task: func(context.Context, download.Progress) error { return nil }})
+	s.manager.Enqueue(jobs.JobSpec{Label: "S02E02 — B", Title: "B", GroupID: "SEASON2", GroupLabel: "Frieren — Season 2", Task: func(context.Context, download.Progress) error { return nil }})
+	s.manager.Enqueue(jobs.JobSpec{Label: "ep-x", Title: "X", Task: func(context.Context, download.Progress) error { return nil }})
 	h := s.Handler()
 	r, w := get("/jobs/list")
 	got := body(t, h, r, w)
@@ -502,7 +624,7 @@ func TestJobsList_GroupHeader(t *testing.T) {
 // and a message, then connects to its SSE stream and asserts the events arrive.
 func TestSSE_JobEvents(t *testing.T) {
 	s := newTestServer(t)
-	task := func(p download.Progress) error {
+	task := func(ctx context.Context, p download.Progress) error {
 		p.Phase("audio")
 		p.Segment(1, 2)
 		p.Printf("Downloading ja-JP audio...\n")
@@ -575,7 +697,7 @@ func TestAPIHealth(t *testing.T) {
 func TestAPIDownload_Happy(t *testing.T) {
 	s := newTestServer(t)
 	s.buildTask = func(string, DownloadOpts) jobs.Task {
-		return func(download.Progress) error { return nil }
+		return func(context.Context, download.Progress) error { return nil }
 	}
 	h := s.Handler()
 	r, w := postJSON(`/api/download`, `{"kind":"episode","id":"ep1","audio":["ja-JP"]}`)
@@ -595,7 +717,7 @@ func TestAPIDownload_Happy(t *testing.T) {
 func TestAPIDownload_NoAudio(t *testing.T) {
 	s := newTestServer(t)
 	s.buildTask = func(string, DownloadOpts) jobs.Task {
-		return func(download.Progress) error { return nil }
+		return func(context.Context, download.Progress) error { return nil }
 	}
 	h := s.Handler()
 	r, w := postJSON(`/api/download`, `{"kind":"episode","id":"ep1","audio":[]}`)
@@ -628,9 +750,9 @@ func TestAPIDownload_NotConfigured(t *testing.T) {
 func TestAPIJobs_FoundAndMissing(t *testing.T) {
 	s := newTestServer(t)
 	s.buildTask = func(string, DownloadOpts) jobs.Task {
-		return func(download.Progress) error { return nil }
+		return func(context.Context, download.Progress) error { return nil }
 	}
-	job := s.manager.Enqueue(jobs.JobSpec{Label: "ep1", Title: "Pilot", SeriesTitle: "Frieren", SeasonNumber: 1, EpisodeNumber: 3, Task: func(download.Progress) error { return nil }})
+	job := s.manager.Enqueue(jobs.JobSpec{Label: "ep1", Title: "Pilot", SeriesTitle: "Frieren", SeasonNumber: 1, EpisodeNumber: 3, Task: func(context.Context, download.Progress) error { return nil }})
 
 	h := s.Handler()
 	r, w := get("/api/jobs/"+job.ID)
@@ -663,8 +785,8 @@ func TestAPIDownload_SeasonDualForm(t *testing.T) {
 	s := newTestServer(t)
 	s.buildSeasonTasks = func(string, DownloadOpts) ([]jobs.JobSpec, error) {
 		return []jobs.JobSpec{
-			{Label: "S02E01 — A", Title: "A", SeasonNumber: 2, EpisodeNumber: 1, Task: func(download.Progress) error { return nil }},
-			{Label: "S02E02 — B", Title: "B", SeasonNumber: 2, EpisodeNumber: 2, Task: func(download.Progress) error { return nil }},
+			{Label: "S02E01 — A", Title: "A", SeasonNumber: 2, EpisodeNumber: 1, Task: func(context.Context, download.Progress) error { return nil }},
+			{Label: "S02E02 — B", Title: "B", SeasonNumber: 2, EpisodeNumber: 2, Task: func(context.Context, download.Progress) error { return nil }},
 		}, nil
 	}
 	h := s.Handler()
@@ -702,7 +824,7 @@ func TestEnqueue_EpisodeMetadataOnJob(t *testing.T) {
 			},
 		},
 	}
-	s.buildTask = func(string, DownloadOpts) jobs.Task { return func(download.Progress) error { return nil } }
+	s.buildTask = func(string, DownloadOpts) jobs.Task { return func(context.Context, download.Progress) error { return nil } }
 	js, err := s.enqueue("episode", "ep1", DownloadOpts{})
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
@@ -754,7 +876,7 @@ func TestPersistLastOpts_KeepsTokenAndStores(t *testing.T) {
 	if err := s.saveConfig(s.cfg); err != nil {
 		t.Fatal(err)
 	}
-	s.buildTask = func(string, DownloadOpts) jobs.Task { return func(download.Progress) error { return nil } }
+	s.buildTask = func(string, DownloadOpts) jobs.Task { return func(context.Context, download.Progress) error { return nil } }
 	h := s.Handler()
 	r, w := postForm("/downloads", "kind=episode&id=ep1&videoQuality=720p&audioQuality=128k&audioLangs=en-US&subsLangs=pt-BR&format=mp4&outputDir=/out/x")
 	h.ServeHTTP(w, r)
@@ -794,7 +916,7 @@ func TestPersistLastOpts_APIPath(t *testing.T) {
 	if err := s.saveConfig(s.cfg); err != nil {
 		t.Fatal(err)
 	}
-	s.buildTask = func(string, DownloadOpts) jobs.Task { return func(download.Progress) error { return nil } }
+	s.buildTask = func(string, DownloadOpts) jobs.Task { return func(context.Context, download.Progress) error { return nil } }
 	h := s.Handler()
 	r, w := postJSON(`/api/download`, `{"kind":"episode","id":"ep1","audio":["en-US"],"quality":"720p","format":"mp4","location":"/out/api"}`)
 	h.ServeHTTP(w, r)
