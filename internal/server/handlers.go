@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"crunchyroll-downloader/internal/crunchy"
+	"crunchyroll-downloader/internal/media"
 	"crunchyroll-downloader/internal/web"
 )
 
@@ -73,10 +74,13 @@ func (s *Server) handleBrowsePost(w http.ResponseWriter, r *http.Request) {
 	s.mu.RUnlock()
 	seasons, err := api.GetSeasons(contentId, "ja-JP", "en-US")
 	if err != nil {
-		render(w, r, web.SeasonsList(nil, "", "Failed to list seasons: "+err.Error()))
+		render(w, r, web.BrowseSeriesResult(media.Series{}, contentId, nil, "Failed to list seasons: "+err.Error()))
 		return
 	}
-	render(w, r, web.SeasonsList(seasons, contentId, ""))
+	// Best-effort series hero: a missing series fetch degrades to the empty
+	// hero (which still renders the Download-series button + the season log).
+	series, _ := api.GetSeries(contentId)
+	render(w, r, web.BrowseSeriesResult(series, contentId, seasons, ""))
 }
 
 func (s *Server) handleSeasonEpisodes(w http.ResponseWriter, r *http.Request) {

@@ -5,12 +5,27 @@ import (
 	"crunchyroll-downloader/internal/media"
 )
 
-// Alert renders a DaisyUI alert. kind is one of error/success/warning/info.
-// Exported so the server can render it standalone as an HTMX partial.
+// Alert renders a DaisyUI alert in the broadcast register. kind is one of
+// error/success/warning/info. Exported so the server can render it standalone.
 templ Alert(kind, msg string) {
-	<div class={ "alert " + alertClass(kind) }>
+	<div class={ "alert " + alertClass(kind) + " rounded-box" }>
 		<span>{ msg }</span>
 	</div>
+}
+
+// eyebrow is the broadcast section header: a condensed uppercase label with a
+// short ember rule. It marks a section off without a heavy border — the mono
+// caps + the ember rule are the divider. The rule lives below the label.
+templ eyebrow(label string) {
+	<div class="flex items-center gap-2">
+		<span class="font-mono text-xs uppercase tracking-widest text-primary/80">{ label }</span>
+	</div>
+}
+
+// eyebrowInline is the same eyebrow label without the block treatment, for use
+// inside flex rows (e.g. a card header next to a count).
+templ eyebrowInline(label string) {
+	<span class="font-mono text-xs uppercase tracking-widest text-primary/80">{ label }</span>
 }
 
 // DownloadButton opens the download-options modal for a granularity (episode /
@@ -20,7 +35,7 @@ templ Alert(kind, msg string) {
 // exists when showModal runs.
 templ DownloadButton(kind, id string) {
 	<button
-		class="btn btn-primary btn-sm"
+		class="btn btn-primary btn-sm rounded-field font-display uppercase tracking-wider"
 		hx-get={ "/downloads/new?kind=" + kind + "&id=" + id }
 		hx-target="#download-modal-content"
 		hx-swap="innerHTML"
@@ -30,48 +45,141 @@ templ DownloadButton(kind, id string) {
 	</button>
 }
 
-// seasonCard renders one season as a card with a button that loads its episodes
-// into the #episodes target via HTMX, and a Download button that opens the
-// download-options modal for the whole season (kind=season).
-templ seasonCard(s media.Season) {
-	<div class="card bg-base-100 shadow border border-base-300">
-		<div class="card-body flex-row items-center justify-between gap-2">
-			<h2 class="card-title">Season { s.SeasonNumber }</h2>
-			<div class="flex gap-2">
-				<button
-					class="btn btn-ghost btn-sm"
-					hx-get={ "/season/" + s.ID + "/episodes" }
-					hx-target="#episodes"
-				>View episodes</button>
-				@DownloadButton("season", s.ID)
+// seriesHero is the broadcast card for a series: a portrait poster, the title
+// in condensed display type, metadata chips (launch year, categories, available
+// audio/subtitle locales), the synopsis, and the "Download entire series"
+// action. It anchors the Browse page in real Crunchyroll key art — the one
+// place the panel reads unmistakably as an anime tool. Gracefully empty when the
+// series fetch failed (no title/poster).
+templ seriesHero(series media.Series, seriesID string) {
+	<div class="card bg-base-100 border border-base-300 rounded-box overflow-hidden">
+		<div class="card-body flex-row gap-4 p-4">
+			if img, ok := media.BestImage(series.Images.PosterTall); ok && img.Source != "" {
+				<img
+					src={ img.Source }
+					alt={ series.Title }
+					class="w-28 md:w-36 rounded-box object-cover shrink-0 border border-base-300"
+					loading="lazy"
+				/>
+			}
+			<div class="min-w-0 flex flex-col gap-2">
+				<span class="font-mono text-xs uppercase tracking-widest text-primary/80">Series</span>
+				<h2 class="font-display uppercase text-2xl md:text-3xl leading-tight">
+					if series.Title != "" {
+						{ series.Title }
+					} else {
+						Download this series
+					}
+				</h2>
+				if series.Title != "" {
+					<div class="flex flex-wrap gap-1.5">
+						if series.SeriesLaunchYear != 0 {
+							<span class="badge badge-ghost badge-sm font-mono">{ series.SeriesLaunchYear }</span>
+						}
+						for _, c := range series.TenantCategories {
+							<span class="badge badge-ghost badge-sm">{ c }</span>
+						}
+						for _, l := range series.AudioLocales {
+							<span class="badge badge-outline badge-sm font-mono">{ l }</span>
+						}
+					</div>
+					if series.Description != "" {
+						<p class="text-sm text-base-content/70 line-clamp-3">{ series.Description }</p>
+					}
+				}
+				<div class="mt-1">
+					@DownloadButton("series", seriesID)
+				</div>
 			</div>
 		</div>
 	</div>
 }
 
-// episodeRow renders one episode as a table row with a per-row Download button
-// that opens the download-options modal for that single episode (kind=episode).
-templ episodeRow(ep media.SeasonEpisode) {
-	<tr>
-		<td class="font-mono whitespace-nowrap">E{ ep.EpisodeNumber }</td>
-		<td>{ ep.Title }</td>
-		<td class="flex flex-wrap gap-1">
-			for _, l := range audioLocales(ep) {
-				<span class="badge badge-ghost badge-sm">{ l }</span>
+// seasonCard renders one season as a "program log" row: a mono season number
+// (the channel marker), the season title, episode count, audio-locale chips, and
+// the View / Download-season actions.
+templ seasonCard(s media.Season) {
+	<div class="flex items-center gap-3 py-2.5 border-b border-base-300/70 last:border-b-0">
+		<span class="font-mono text-sm text-primary/80 w-10 shrink-0">S{ s.SeasonNumber }</span>
+		<div class="min-w-0 flex-1">
+			<div class="flex items-baseline gap-2 flex-wrap">
+				if s.Title != "" {
+					<span class="font-medium truncate">{ s.Title }</span>
+				} else {
+					<span class="font-medium">Season { s.SeasonNumber }</span>
+				}
+				if s.NumberOfEpisodes > 0 {
+					<span class="font-mono text-xs text-base-content/50">{ s.NumberOfEpisodes } ep</span>
+				}
+			</div>
+			if len(s.AudioLocales) > 0 {
+				<div class="flex flex-wrap gap-1 mt-0.5">
+					for _, l := range s.AudioLocales {
+						<span class="badge badge-outline badge-xs font-mono">{ l }</span>
+					}
+				</div>
 			}
-		</td>
-		<td>@DownloadButton("episode", ep.ID)</td>
-	</tr>
+		</div>
+		<div class="flex gap-1 shrink-0">
+			<button
+				class="btn btn-ghost btn-sm rounded-field font-display uppercase tracking-wider text-xs"
+				hx-get={ "/season/" + s.ID + "/episodes" }
+				hx-target="#episodes"
+			>View</button>
+			@DownloadButton("season", s.ID)
+		</div>
+	</div>
 }
 
-// statusBadge renders a job's status as a colored DaisyUI badge.
+// episodeCard renders one episode as a TV-guide card: a thumbnail, the mono
+// episode number, title, duration, air date, a premium badge, and the per-row
+// Download button. Replaces the old checkbox table row.
+templ episodeCard(ep media.SeasonEpisode) {
+	<div class="card bg-base-100 border border-base-300 rounded-box overflow-hidden">
+		if img, ok := media.BestImage(ep.Images.Thumbnail); ok && img.Source != "" {
+			<img src={ img.Source } alt={ ep.Title } class="w-full aspect-video object-cover" loading="lazy"/>
+		} else {
+			<div class="w-full aspect-video bg-base-300/60 flex items-center justify-center">
+				<span class="font-mono text-2xl text-base-content/30">E{ ep.EpisodeNumber }</span>
+			</div>
+		}
+		<div class="card-body gap-1.5 p-3">
+			<div class="flex items-center justify-between gap-2">
+				<span class="font-mono text-xs text-primary/80">E{ ep.EpisodeNumber }</span>
+				if d := formatDuration(ep.DurationMS); d != "" {
+					<span class="font-mono text-xs text-base-content/50">{ d }</span>
+				}
+			</div>
+			<h3 class="font-display text-base leading-tight truncate" title={ ep.Title }>{ ep.Title }</h3>
+			<div class="flex flex-wrap items-center gap-1.5">
+				if d := airDate(ep.EpisodeAirDate); d != "" {
+					<span class="font-mono text-xs text-base-content/40">{ d }</span>
+				}
+				if ep.IsPremiumOnly {
+					<span class="badge badge-warning badge-sm font-mono">Premium</span>
+				}
+			</div>
+			if locs := audioLocales(ep); len(locs) > 0 {
+				<div class="flex flex-wrap gap-1 mt-0.5">
+					for _, l := range locs {
+						<span class="badge badge-outline badge-xs font-mono">{ l }</span>
+					}
+				</div>
+			}
+			<div class="mt-1.5">
+				@DownloadButton("episode", ep.ID)
+			</div>
+		</div>
+	</div>
+}
+
+// statusBadge renders a job's status as a colored badge.
 templ statusBadge(s jobs.Status) {
-	<span class={ "badge " + statusBadgeClass(string(s)) }>{ string(s) }</span>
+	<span class={ "badge " + statusBadgeClass(string(s)) + " badge-sm font-mono" }>{ string(s) }</span>
 }
 
-// progressBar renders a DaisyUI progress bar for a job from its last segment
-// (done, total) tick. Jobs that haven't reported segments show an indeterminate
-// bar.
+// progressBar renders a progress bar for a job from its last segment tick.
+// Indeterminate (no segments yet) shows an empty bar.
 templ progressBar(j *jobs.Job) {
 	{{
 		done, total := j.Segment()
@@ -87,25 +195,54 @@ templ progressBar(j *jobs.Job) {
 	}
 }
 
-// jobCard renders one job: label, status badge, progress bar, and an error line
-// if it failed. The card's id lets the SSE handler target it for swaps; the
-// data-job-sse attribute opts the card into the JobsPage EventSource script,
-// and the progress/status element ids let that script update them live.
+// jobCard renders one job as a transmission-log line: a pulsing ember status dot
+// (the signature), the label, a status badge, a progress bar, and an error line
+// if it failed. The card's id lets the SSE handler target it for swaps;
+// data-job-sse opts it into the JobsPage EventSource script, and the dot/status
+// element ids let that script update them live.
 templ jobCard(j *jobs.Job) {
-	<div class="card bg-base-100 shadow border border-base-300" id={ "job-" + j.ID } data-job-sse={ j.ID }>
-		<div class="card-body gap-2">
-			<div class="flex items-center justify-between gap-2">
-				<h3 class="card-title text-base truncate">{ j.Label }</h3>
-				<span class={ "badge " + statusBadgeClass(string(j.Status())) } id={ "job-" + j.ID + "-status" }>{ string(j.Status()) }</span>
-			</div>
-			<div id={ "job-" + j.ID + "-progress" }>
-				@progressBar(j)
-			</div>
-			<div id={ "job-" + j.ID + "-error" }>
-				if j.Status() == "error" {
-					<div class="text-xs text-error font-mono break-all">{ j.Error() }</div>
-				}
-			</div>
+	<div class="flex flex-col gap-1 py-2.5 border-b border-base-300/70 last:border-b-0" id={ "job-" + j.ID } data-job-sse={ j.ID }>
+		<div class="flex items-center gap-2">
+			<span
+				id={ "job-" + j.ID + "-dot" }
+				class={ "inline-block h-2 w-2 rounded-full shrink-0 " + statusDotClass(j.Status()) + statusPulseClass(j.Status()) }
+			></span>
+			<h3 class="font-display text-sm leading-tight truncate flex-1" title={ j.Label }>{ j.Label }</h3>
+			<span class={ "badge " + statusBadgeClass(string(j.Status())) + " badge-sm font-mono shrink-0" } id={ "job-" + j.ID + "-status" }>{ string(j.Status()) }</span>
+		</div>
+		<div id={ "job-" + j.ID + "-progress" } class="pl-4">
+			@progressBar(j)
+		</div>
+		<div id={ "job-" + j.ID + "-error" } class="pl-4">
+			if j.Status() == "error" {
+				<div class="text-xs text-error font-mono break-all">{ j.Error() }</div>
+			}
 		</div>
 	</div>
+}
+
+// statusDotClass maps a job status to the dot color used by the transmission-log
+// line: ember while active, green done, red error, muted neutral queued.
+func statusDotClass(s jobs.Status) string {
+	switch string(s) {
+	case "downloading", "muxing":
+		return "bg-primary"
+	case "done":
+		return "bg-success"
+	case "error":
+		return "bg-error"
+	default:
+		return "bg-base-content/30"
+	}
+}
+
+// statusPulseClass returns " crdl-dot" while a job is active so the dot pulses
+// (the signature); empty otherwise. (Leading space keeps it concat-safe.)
+func statusPulseClass(s jobs.Status) string {
+	switch string(s) {
+	case "downloading", "muxing":
+		return " crdl-dot"
+	default:
+		return ""
+	}
 }

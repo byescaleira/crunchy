@@ -2,22 +2,28 @@ package web
 
 // Layout is the page chrome shared by every page: the DaisyUI data-theme
 // container, the compiled app.css and htmx.min.js (served from the embedded
-// static FS), the navbar, a tiny theme-toggle script, and the shared
-// download-options modal shell. Pages pass their body as children via
-// @Layout(...) { ... }.
+// static FS), the broadcast navbar, the shared download-options modal shell,
+// and the theme-toggle + modal-event scripts. Pages pass their body as children
+// via @Layout(...) { ... }.
 templ Layout(title, active string) {
 	<!DOCTYPE html>
-	<html lang="en" data-theme="dark">
+	<html lang="en" data-theme="crunchy">
 		<head>
 			<meta charset="UTF-8"/>
 			<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 			<title>{ title } · Crunchy Downloader</title>
+			<link rel="preconnect" href="https://fonts.googleapis.com"/>
+			<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin=""/>
+			<link
+				rel="stylesheet"
+				href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Oswald:wght@500;600;700&display=swap"
+			/>
 			<link rel="stylesheet" href="/static/app.css"/>
 			<script src="/static/htmx.min.js"></script>
 		</head>
-		<body class="min-h-screen bg-base-200">
+		<body class="min-h-screen bg-base-200 text-base-content">
 			@navbar(active)
-			<main class="container mx-auto p-4 max-w-5xl">
+			<main class="container mx-auto p-4 max-w-6xl">
 				{ children... }
 			</main>
 			@DownloadModalShell()
@@ -30,7 +36,7 @@ templ Layout(title, active string) {
 					}
 					window.crdlToggleTheme = function () {
 						var cur = document.documentElement.getAttribute("data-theme");
-						var next = cur === "dark" ? "light" : "dark";
+						var next = cur === "crunchy" ? "light" : "crunchy";
 						document.documentElement.setAttribute("data-theme", next);
 						localStorage.setItem(k, next);
 					};
@@ -70,35 +76,50 @@ templ Layout(title, active string) {
 // backdrop click both work natively).
 templ DownloadModalShell() {
 	<dialog id="download-modal" class="modal">
-		<div class="modal-box">
+		<div class="modal-box bg-base-100 border border-base-300">
 			<div id="download-modal-content"></div>
 		</div>
-		<form method="dialog" class="modal-backdrop">
+		<form method="dialog" class="modal-backdrop bg-black/60">
 			<button>close</button>
 		</form>
 	</dialog>
 }
 
+// navbar is the broadcast top bar: an ember brand mark with a condensed label,
+// the section links, and the theme toggle. The bottom ember rule is the channel
+// marker that ties the panel to the transmission-log signature.
 templ navbar(active string) {
-	<div class="navbar bg-base-100 shadow-sm sticky top-0 z-10">
-		<div class="navbar-start">
-			<span class="text-xl font-bold px-2">🎬 Crunchy Downloader</span>
+	<div class="sticky top-0 z-20 bg-base-100/95 backdrop-blur border-b border-base-300">
+		<div class="container mx-auto max-w-6xl px-4">
+			<div class="navbar min-h-16 gap-2">
+				<div class="navbar-start gap-2">
+					<span class="inline-block h-7 w-7 rounded-sm bg-primary"></span>
+					<span class="font-display uppercase tracking-widest text-lg font-bold">Crunchy Downloader</span>
+				</div>
+				<div class="navbar-center gap-1">
+					@navLink("Settings", "/settings", active == "settings")
+					@navLink("Browse", "/browse", active == "browse")
+					@navLink("Jobs", "/jobs", active == "jobs")
+				</div>
+				<div class="navbar-end">
+					<button
+						class="btn btn-ghost btn-sm font-mono"
+						onclick="window.crdlToggleTheme()"
+						title="Toggle theme"
+					>◑</button>
+				</div>
+			</div>
 		</div>
-		<div class="navbar-center gap-2">
-			@navLink("Settings", "/settings", active == "settings")
-			@navLink("Browse", "/browse", active == "browse")
-			@navLink("Jobs", "/jobs", active == "jobs")
-		</div>
-		<div class="navbar-end">
-			<button class="btn btn-ghost btn-sm" onclick="window.crdlToggleTheme()">🌓</button>
-		</div>
+		<div class="h-px bg-primary/70"></div>
 	</div>
 }
 
+// navLink is a section link in the broadcast navbar. The active link carries an
+// ember underline marker; inactive links are quiet.
 templ navLink(label, href string, active bool) {
 	if active {
-		<a class="btn btn-sm btn-primary" href={ href }>{ label }</a>
+		<a class="px-3 py-2 font-display uppercase tracking-wider text-sm text-primary border-b-2 border-primary" href={ href }>{ label }</a>
 	} else {
-		<a class="btn btn-sm btn-ghost" href={ href }>{ label }</a>
+		<a class="px-3 py-2 font-display uppercase tracking-wider text-sm text-base-content/60 hover:text-base-content border-b-2 border-transparent" href={ href }>{ label }</a>
 	}
 }

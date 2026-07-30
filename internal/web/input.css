@@ -5,7 +5,78 @@
    (zero JS) so it layers semantic component classes on top of Tailwind without
    competing with HTMX for control of the DOM. */
 @import "tailwindcss";
+
+/* The "crunchy" theme: a late-night broadcast-desk palette. Ink navy surfaces,
+   ivory text, Crunchyroll warm-orange (ember) as the single accent, indigo for
+   chips/depth. The light alt falls back to DaisyUI's built-in light theme. */
 @plugin "daisyui" {
-  /* Default dark theme for the control panel; the navbar offers a toggle. */
-  themes: dark --default, light --prefersdark;
+  themes: crunchy --default, light --prefersdark;
+}
+
+@plugin "daisyui/theme" {
+  name: "crunchy";
+  default: true;
+  prefersdark: true;
+  color-scheme: dark;
+
+  --color-base-100: #0E1116;
+  --color-base-200: #141922;
+  --color-base-300: #1E2530;
+  --color-base-content: #ECE6D9;
+
+  --color-primary: #F47521;
+  --color-primary-content: #1A0F08;
+
+  --color-secondary: #2A3354;
+  --color-secondary-content: #ECE6D9;
+
+  --color-accent: #3A4F7A;
+  --color-accent-content: #ECE6D9;
+
+  --color-neutral: #0B0E12;
+  --color-neutral-content: #ECE6D9;
+
+  --color-error: #FF5A4D;
+  --color-success: #7DD3A0;
+  --color-warning: #F5C451;
+  --color-info: #6AA6E0;
+
+  --radius-selector: 0.5rem;
+  --radius-field: 0.5rem;
+  --radius-box: 0.75rem;
+}
+
+/* Tailwind v4 design tokens. Oswald is the broadcast display face (used with
+   restraint on headings/eyebrows), Hanken Grotesk the body face, JetBrains Mono
+   the data face (episode numbers, durations, the job log). */
+@theme {
+  --font-sans: "Hanken Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Oswald", ui-sans-serif, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer base {
+  body {
+    font-family: var(--font-sans);
+  }
+  /* Condensed broadcast headings, used with restraint. */
+  h1, h2, h3 {
+    font-family: var(--font-display);
+    letter-spacing: 0.02em;
+  }
+}
+
+/* Signature: the transmission-log status dot. Pulses while a job downloads;
+   freezes (static) under prefers-reduced-motion. */
+@keyframes crdl-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.crdl-dot {
+  animation: crdl-pulse 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .crdl-dot {
+    animation: none;
+  }
 }

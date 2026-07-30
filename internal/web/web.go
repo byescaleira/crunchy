@@ -7,6 +7,7 @@ package web
 
 import (
 	"embed"
+	"fmt"
 
 	"crunchyroll-downloader/internal/media"
 )
@@ -100,6 +101,30 @@ func downloadButtonLabel(kind string) string {
 	default:
 		return "Download"
 	}
+}
+
+// formatDuration turns a millisecond duration into a broadcast-log style
+// timestamp (M:SS, or H:MM:SS over an hour). 0 → "".
+func formatDuration(ms int) string {
+	if ms <= 0 {
+		return ""
+	}
+	total := ms / 1000
+	h := total / 3600
+	m := (total % 3600) / 60
+	s := total % 60
+	if h > 0 {
+		return fmt.Sprintf("%d:%02d:%02d", h, m, s)
+	}
+	return fmt.Sprintf("%d:%02d", m, s)
+}
+
+// airDate returns the YYYY-MM-DD prefix of an ISO date string, or "".
+func airDate(s string) string {
+	if len(s) >= 10 {
+		return s[:10]
+	}
+	return ""
 }
 
 // audioLocales returns the distinct audio locales available for an episode: the
