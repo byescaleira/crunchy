@@ -1,6 +1,8 @@
 package mux
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -186,5 +188,59 @@ func TestBuildMergeArgs_MP4_Cover(t *testing.T) {
 	// Subs are mov_text, not copy.
 	if !containsPair(got, "-c:s", "mov_text") {
 		t.Error("MP4 subs must be mov_text")
+	}
+}
+
+func TestRescaleASSFont(t *testing.T) {
+	// Crunchyroll-shaped ASS: 640x360 canvas, Fontsize 20 (Default) / 18 (OS).
+	ass := `[Script Info]
+ScriptType: v4.00+
+PlayResX: 640
+PlayResY: 360
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,12,1
+Style: OS,Arial,18,&H00FFFFFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,1,8,1,1,15,0
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,Hello
+`
+	path := filepath.Join(t.TempDir(), "sub.ass")
+	if err := os.WriteFile(path, []byte(ass), 0o600); err != nil {
+		t.Fatalf("write: %s", err)
+	}
+
+	// Rescale to a 1080p video: 20 * (1080/360) = 60 ; 18 * 3 = 54.
+	if err := rescaleASSFont(path, 1080); err != nil {
+		t.Fatalf("rescaleASSFont: %s", err)
+	}
+	got, _ := os.ReadFile(path)
+	g := string(got)
+	if !strings.Contains(g, "Style: Default,Arial,60,") {
+		t.Errorf("Default Fontsize not scaled to 60; got:\n%s", g)
+	}
+	if !strings.Contains(g, "Style: OS,Arial,54,") {
+		t.Errorf("OS Fontsize not scaled to 54; got:\n%s", g)
+	}
+	// Dialogue text must be untouched.
+	if !strings.Contains(g, "Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,Hello") {
+		t.Errorf("dialogue line should be unchanged; got:\n%s", g)
+	}
+}
+
+func TestRescaleASSFont_NoPlayResY(t *testing.T) {
+	// No PlayResY -> rescale is a no-op (file unchanged).
+	ass := "[Script Info]\nScriptType: v4.00+\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize\nStyle: Default,Arial,20\n"
+	path := filepath.Join(t.TempDir(), "sub.ass")
+	os.WriteFile(path, []byte(ass), 0o600)
+	before, _ := os.ReadFile(path)
+	if err := rescaleASSFont(path, 1080); err != nil {
+		t.Fatalf("rescaleASSFont: %s", err)
+	}
+	after, _ := os.ReadFile(path)
+	if string(before) != string(after) {
+		t.Errorf("file changed despite no PlayResY:\nbefore: %q\nafter:  %q", before, after)
 	}
 }

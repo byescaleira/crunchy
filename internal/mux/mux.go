@@ -10,8 +10,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"crunchyroll-downloader/internal/media"
@@ -203,6 +205,24 @@ func maturityOf(m media.EpisodeMetadata) string {
 // signal when ctx is cancelled); under a non-cancelled context it behaves
 // identically to exec.Command, so the CLI output is unchanged.
 func Merge(ctx context.Context, videoFile string, audioTracks, subTracks []MediaTrack, outputFile, coverFile, format string, info media.EpisodeInfo) error {
+	// MP4's mov_text drops the one thing that makes Crunchyroll subtitles
+	// readable: ASS PlayResY. The subs are authored on a small canvas (e.g.
+	// 640x360) with a small Fontsize (e.g. 20); libass scales Fontsize by
+	// display_height/PlayResY, so in MKV that 20 renders ~60px at 1080p. mov_text
+	// ignores PlayResY and writes Fontsize verbatim into a subtitle track with
+	// no dimensions, so players render it at ~20px on the video frame —
+	// effectively invisible. MKV keeps the ASS verbatim (libass does the
+	// scaling), so only MP4 needs this rescale to the real video height.
+	if format == "mp4" && len(subTracks) > 0 {
+		if h := probeVideoHeight(videoFile); h > 0 {
+			for _, sub := range subTracks {
+				if err := rescaleASSFont(sub.File, h); err != nil {
+					return fmt.Errorf("rescale subtitle %s: %w", sub.Locale, err)
+				}
+			}
+		}
+	}
+
 	args := BuildMergeArgs(videoFile, audioTracks, subTracks, outputFile, coverFile, format, info)
 
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
@@ -227,4 +247,83 @@ func Merge(ctx context.Context, videoFile string, audioTracks, subTracks []Media
 
 	fmt.Printf("\nDownload finished! Output file: %s\n\n", outputFile)
 	return nil
+}
+
+// probeVideoHeight returns the height (in pixels) of the first video stream in
+// file, via ffprobe. Returns 0 if ffprobe is unavailable or the height can't be
+// read; callers treat 0 as "don't rescale" (subs stay at their authored size,
+// which is no worse than before this fix).
+func probeVideoHeight(file string) int {
+	out, err := exec.Command("ffprobe",
+		"-v", "error",
+		"-select_streams", "v:0",
+		"-show_entries", "stream=height",
+		"-of", "csv=p=0",
+		file,
+	).Output()
+	if err != nil {
+		return 0
+	}
+	h, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+	return h
+}
+
+// rescaleASSFont rewrites an .ass in place so every Style Fontsize is scaled to a
+// target video height, restoring what mov_text loses: the ASS PlayResY ratio.
+//
+// libass (MKV) renders Fontsize at display_height/PlayResY, so a Crunchyroll sub
+// authored at PlayResY=360 with Fontsize=20 shows ~60px at 1080p. mov_text (MP4)
+// ignores PlayResY and emits Fontsize verbatim with no subtitle-track dimensions,
+// so the same 20 renders ~20px on the frame — invisible. Scaling each Style
+// Fontsize by targetH/PlayResY before the mux makes mov_text emit the intended
+// size. Only the Style Fontsize column is touched (mov_text ignores ASS
+// positions/colors except bold/italic, which are unaffected). No-op when
+// PlayResY is absent, zero, or already equals targetH.
+func rescaleASSFont(path string, targetH int) error {
+	if targetH <= 0 {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+
+	// Find PlayResY in [Script Info].
+	playResY := 0
+	for _, L := range lines {
+		s := strings.TrimSpace(L)
+		if strings.HasPrefix(s, "PlayResY:") {
+			v, _ := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(s, "PlayResY:")))
+			playResY = v
+			break
+		}
+	}
+	if playResY <= 0 || playResY == targetH {
+		return nil // unknown canvas, or already 1:1 with the video
+	}
+	scale := float64(targetH) / float64(playResY)
+
+	// Style: Name,Fontname,Fontsize,... (Fontsize is the 3rd comma field, index 2).
+	changed := false
+	for i, L := range lines {
+		if !strings.HasPrefix(strings.TrimSpace(L), "Style:") {
+			continue
+		}
+		parts := strings.SplitN(L, ",", 23) // ASS Style has 23 fields; keep the tail whole
+		if len(parts) < 3 {
+			continue
+		}
+		fs, err := strconv.Atoi(strings.TrimSpace(parts[2]))
+		if err != nil {
+			continue
+		}
+		parts[2] = strconv.Itoa(int(math.Round(float64(fs) * scale)))
+		lines[i] = strings.Join(parts, ",")
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600)
 }
