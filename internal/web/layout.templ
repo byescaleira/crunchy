@@ -2,12 +2,12 @@ package web
 
 // Layout is the page chrome shared by every page: the DaisyUI data-theme
 // container, the compiled app.css and htmx.min.js (served from the embedded
-// static FS), the broadcast navbar, the shared download-options modal shell,
-// and the theme-toggle + modal-event scripts. Pages pass their body as children
-// via @Layout(...) { ... }.
+// static FS), the rubber-hose navbar, the shared download-options modal shell,
+// and the theme-toggle + multiplex-SSE + modal-event scripts. Pages pass their
+// body as children via @Layout(...) { ... }.
 templ Layout(title, active string) {
 	<!DOCTYPE html>
-	<html lang="en" data-theme="crunchy">
+	<html lang="en" data-theme="rubberhose">
 		<head>
 			<meta charset="UTF-8"/>
 			<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
@@ -16,7 +16,7 @@ templ Layout(title, active string) {
 			<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin=""/>
 			<link
 				rel="stylesheet"
-				href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Oswald:wght@500;600;700&display=swap"
+				href="https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Bungee&family=IBM+Plex+Mono:wght@400;500;700&family=Nunito+Sans:wght@400;600;700;900&display=swap"
 			/>
 			<link rel="stylesheet" href="/static/app.css"/>
 			<script src="/static/htmx.min.js"></script>
@@ -31,12 +31,12 @@ templ Layout(title, active string) {
 				(function () {
 					var k = "crdl-theme";
 					var t = localStorage.getItem(k);
-					if (t) {
+					if (t === "rubberhose" || t === "rubberhose-dark") {
 						document.documentElement.setAttribute("data-theme", t);
 					}
 					window.crdlToggleTheme = function () {
 						var cur = document.documentElement.getAttribute("data-theme");
-						var next = cur === "crunchy" ? "light" : "crunchy";
+						var next = cur === "rubberhose-dark" ? "rubberhose" : "rubberhose-dark";
 						document.documentElement.setAttribute("data-theme", next);
 						localStorage.setItem(k, next);
 					};
@@ -74,7 +74,7 @@ templ Layout(title, active string) {
 					};
 					var CHIP_BASE = "inline-flex items-center px-1.5 py-0.5 rounded-field font-mono text-[10px] uppercase tracking-wider border transition-colors ";
 					var CHIP_DONE = "border-primary/40 text-primary bg-primary/10";
-					var CHIP_ACTIVE = "border-primary text-primary-content bg-primary";
+					var CHIP_ACTIVE = "border-primary text-primary-content bg-primary rh-blink";
 					var CHIP_PENDING = "border-base-300 text-base-content/40";
 					var phase = {};
 
@@ -117,7 +117,7 @@ templ Layout(title, active string) {
 						}
 						var dot = document.getElementById("job-" + id + "-dot");
 						if (dot) {
-							dot.className = "inline-block h-2 w-2 rounded-full shrink-0 " + (dotColor[status] || "bg-base-content/30");
+							dot.className = "inline-block h-2.5 w-2.5 rounded-full shrink-0 " + (dotColor[status] || "bg-base-content/30");
 						}
 						if (status === "error") {
 							var err = document.getElementById("job-" + id + "-error");
@@ -193,7 +193,7 @@ templ Layout(title, active string) {
 // backdrop click both work natively).
 templ DownloadModalShell() {
 	<dialog id="download-modal" class="modal">
-		<div class="modal-box bg-base-100 border border-base-300">
+		<div class="modal-box bg-base-100 rh-sticker">
 			<div
 				id="download-modal-content"
 				hx-on::after-swap="if(this.querySelector('form')){var d=document.getElementById('download-modal');if(d&&!d.open){d.showModal();}}"
@@ -205,16 +205,16 @@ templ DownloadModalShell() {
 	</dialog>
 }
 
-// navbar is the broadcast top bar: an ember brand mark with a condensed label,
-// the section links, and the theme toggle. The bottom ember rule is the channel
-// marker that ties the panel to the transmission-log signature.
+// navbar is the rubber-hose top bar: a hand-drawn film-reel brand mark with the
+// Bungee wordmark, the section links, and a sun/moon theme toggle. A halftone
+// strip + ink rule mark the bottom edge.
 templ navbar(active string) {
-	<div class="sticky top-0 z-20 bg-base-100/95 backdrop-blur border-b border-base-300">
+	<div class="sticky top-0 z-20 bg-base-100/95 backdrop-blur border-b-[3px] border-[var(--rh-edge)]">
 		<div class="container mx-auto max-w-6xl px-4">
 			<div class="navbar min-h-16 gap-2">
-				<div class="navbar-start gap-2">
-					<span class="inline-block h-7 w-7 rounded-sm bg-primary"></span>
-					<span class="font-display uppercase tracking-widest text-lg font-bold">Crunchy Downloader</span>
+				<div class="navbar-start gap-2 items-center">
+					@iconReel("h-8 w-8 text-primary shrink-0")
+					<span class="font-label uppercase tracking-wider text-lg leading-none">Crunchy Downloader</span>
 				</div>
 				<div class="navbar-center gap-1">
 					@navLink("Settings", "/settings", active == "settings")
@@ -223,23 +223,27 @@ templ navbar(active string) {
 				</div>
 				<div class="navbar-end">
 					<button
-						class="btn btn-ghost btn-sm font-mono"
+						class="btn btn-ghost btn-sm rh-press"
 						onclick="window.crdlToggleTheme()"
-						title="Toggle theme"
-					>◑</button>
+						title="Toggle light / dark"
+						aria-label="Toggle theme"
+					>
+						@iconTheme("h-5 w-5")
+					</button>
 				</div>
 			</div>
 		</div>
-		<div class="h-px bg-primary/70"></div>
+		<div class="h-1.5 rh-halftone opacity-60"></div>
 	</div>
 }
 
-// navLink is a section link in the broadcast navbar. The active link carries an
-// ember underline marker; inactive links are quiet.
+// navLink is a section link in the rubber-hose navbar. Bungee uppercase label;
+// the active link sits on a primary tab with an ink underline, inactive links
+// are quiet cream.
 templ navLink(label, href string, active bool) {
 	if active {
-		<a class="px-3 py-2 font-display uppercase tracking-wider text-sm text-primary border-b-2 border-primary" href={ href }>{ label }</a>
+		<a class="px-3 py-2 font-label uppercase tracking-wider text-xs text-primary-content bg-primary rounded-t-field border-b-[3px] border-[var(--rh-edge)]" href={ href }>{ label }</a>
 	} else {
-		<a class="px-3 py-2 font-display uppercase tracking-wider text-sm text-base-content/60 hover:text-base-content border-b-2 border-transparent" href={ href }>{ label }</a>
+		<a class="px-3 py-2 font-label uppercase tracking-wider text-xs text-base-content/70 hover:text-base-content border-b-[3px] border-transparent" href={ href }>{ label }</a>
 	}
 }

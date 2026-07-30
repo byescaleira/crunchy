@@ -10,9 +10,9 @@ import templruntime "github.com/a-h/templ/runtime"
 
 // Layout is the page chrome shared by every page: the DaisyUI data-theme
 // container, the compiled app.css and htmx.min.js (served from the embedded
-// static FS), the broadcast navbar, the shared download-options modal shell,
-// and the theme-toggle + modal-event scripts. Pages pass their body as children
-// via @Layout(...) { ... }.
+// static FS), the rubber-hose navbar, the shared download-options modal shell,
+// and the theme-toggle + multiplex-SSE + modal-event scripts. Pages pass their
+// body as children via @Layout(...) { ... }.
 func Layout(title, active string) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
@@ -34,7 +34,7 @@ func Layout(title, active string) templ.Component {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<!doctype html><html lang=\"en\" data-theme=\"crunchy\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"><title>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<!doctype html><html lang=\"en\" data-theme=\"rubberhose\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"><title>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -47,7 +47,7 @@ func Layout(title, active string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, " · Crunchy Downloader</title><link rel=\"preconnect\" href=\"https://fonts.googleapis.com\"><link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin=\"\"><link rel=\"stylesheet\" href=\"https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Oswald:wght@500;600;700&display=swap\"><link rel=\"stylesheet\" href=\"/static/app.css\"><script src=\"/static/htmx.min.js\"></script></head><body class=\"min-h-screen bg-base-200 text-base-content\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, " · Crunchy Downloader</title><link rel=\"preconnect\" href=\"https://fonts.googleapis.com\"><link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin=\"\"><link rel=\"stylesheet\" href=\"https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Bungee&family=IBM+Plex+Mono:wght@400;500;700&family=Nunito+Sans:wght@400;600;700;900&display=swap\"><link rel=\"stylesheet\" href=\"/static/app.css\"><script src=\"/static/htmx.min.js\"></script></head><body class=\"min-h-screen bg-base-200 text-base-content\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -71,7 +71,7 @@ func Layout(title, active string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "<script>\n\t\t\t\t(function () {\n\t\t\t\t\tvar k = \"crdl-theme\";\n\t\t\t\t\tvar t = localStorage.getItem(k);\n\t\t\t\t\tif (t) {\n\t\t\t\t\t\tdocument.documentElement.setAttribute(\"data-theme\", t);\n\t\t\t\t\t}\n\t\t\t\t\twindow.crdlToggleTheme = function () {\n\t\t\t\t\t\tvar cur = document.documentElement.getAttribute(\"data-theme\");\n\t\t\t\t\t\tvar next = cur === \"crunchy\" ? \"light\" : \"crunchy\";\n\t\t\t\t\t\tdocument.documentElement.setAttribute(\"data-theme\", next);\n\t\t\t\t\t\tlocalStorage.setItem(k, next);\n\t\t\t\t\t};\n\t\t\t\t})();\n\t\t\t</script><script>\n\t\t\t\t// One multiplexed /jobs/events stream drives every job card on the\n\t\t\t\t// page (Browse queue, Jobs page). Each SSE event carries the job id\n\t\t\t\t// so the handlers dispatch to the matching card. The server sends a\n\t\t\t\t// snapshot on connect (and on every EventSource reconnect), so a late\n\t\t\t\t// or reconnected client catches up to the current state.\n\t\t\t\t(function () {\n\t\t\t\t\tif (window.__crdlJobs) { return; }\n\t\t\t\t\twindow.__crdlJobs = true;\n\t\t\t\t\tvar dotColor = {\n\t\t\t\t\t\tqueued: \"bg-base-content/30\",\n\t\t\t\t\t\tdownloading: \"bg-primary\",\n\t\t\t\t\t\tmuxing: \"bg-primary\",\n\t\t\t\t\t\tdone: \"bg-success\",\n\t\t\t\t\t\terror: \"bg-error\"\n\t\t\t\t\t};\n\t\t\t\t\tvar badgeClass = {\n\t\t\t\t\t\tqueued: \"badge-ghost\",\n\t\t\t\t\t\tdownloading: \"badge-warning\",\n\t\t\t\t\t\tmuxing: \"badge-info\",\n\t\t\t\t\t\tdone: \"badge-success\",\n\t\t\t\t\t\terror: \"badge-error\"\n\t\t\t\t\t};\n\t\t\t\t\tvar PHASES = [\"subtitles\", \"audio\", \"video\", \"mux\"];\n\t\t\t\t\tvar PHASE_LABELS = {\n\t\t\t\t\t\tsubtitles: \"Fetching subtitles\",\n\t\t\t\t\t\taudio: \"Downloading audio\",\n\t\t\t\t\t\tvideo: \"Downloading segments\",\n\t\t\t\t\t\tmux: \"Converting\"\n\t\t\t\t\t};\n\t\t\t\t\tvar CHIP_BASE = \"inline-flex items-center px-1.5 py-0.5 rounded-field font-mono text-[10px] uppercase tracking-wider border transition-colors \";\n\t\t\t\t\tvar CHIP_DONE = \"border-primary/40 text-primary bg-primary/10\";\n\t\t\t\t\tvar CHIP_ACTIVE = \"border-primary text-primary-content bg-primary\";\n\t\t\t\t\tvar CHIP_PENDING = \"border-base-300 text-base-content/40\";\n\t\t\t\t\tvar phase = {};\n\n\t\t\t\t\tfunction chipClass(state) {\n\t\t\t\t\t\tif (state === \"done\") { return CHIP_BASE + CHIP_DONE; }\n\t\t\t\t\t\tif (state === \"active\") { return CHIP_BASE + CHIP_ACTIVE; }\n\t\t\t\t\t\treturn CHIP_BASE + CHIP_PENDING;\n\t\t\t\t\t}\n\t\t\t\t\tfunction renderRail(id, ph) {\n\t\t\t\t\t\tvar idx = PHASES.indexOf(ph);\n\t\t\t\t\t\tfor (var i = 0; i < PHASES.length; i++) {\n\t\t\t\t\t\t\tvar chip = document.getElementById(\"job-\" + id + \"-chip-\" + PHASES[i]);\n\t\t\t\t\t\t\tif (!chip) { continue; }\n\t\t\t\t\t\t\tvar state = \"pending\";\n\t\t\t\t\t\t\tif (idx >= 0) {\n\t\t\t\t\t\t\t\tif (i < idx) { state = \"done\"; }\n\t\t\t\t\t\t\t\telse if (i === idx) { state = \"active\"; }\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\tchip.className = chipClass(state);\n\t\t\t\t\t\t}\n\t\t\t\t\t}\n\t\t\t\t\tfunction renderRailDone(id) {\n\t\t\t\t\t\tfor (var i = 0; i < PHASES.length; i++) {\n\t\t\t\t\t\t\tvar chip = document.getElementById(\"job-\" + id + \"-chip-\" + PHASES[i]);\n\t\t\t\t\t\t\tif (chip) { chip.className = chipClass(\"done\"); }\n\t\t\t\t\t\t}\n\t\t\t\t\t}\n\t\t\t\t\tfunction setPct(id, pct) {\n\t\t\t\t\t\tvar box = document.getElementById(\"job-\" + id + \"-progress\");\n\t\t\t\t\t\tvar bar = box && box.querySelector(\"progress\");\n\t\t\t\t\t\tif (bar) { bar.value = pct; }\n\t\t\t\t\t\tvar span = document.getElementById(\"job-\" + id + \"-pct\");\n\t\t\t\t\t\tif (span) { span.textContent = pct + \"%\"; }\n\t\t\t\t\t}\n\t\t\t\t\tfunction applyStatus(id, status, message) {\n\t\t\t\t\t\tvar badge = document.getElementById(\"job-\" + id + \"-status\");\n\t\t\t\t\t\tif (badge) {\n\t\t\t\t\t\t\tbadge.textContent = status;\n\t\t\t\t\t\t\tbadge.className = \"badge \" + (badgeClass[status] || \"badge-ghost\") + \" badge-sm font-mono shrink-0 ml-auto\";\n\t\t\t\t\t\t}\n\t\t\t\t\t\tvar dot = document.getElementById(\"job-\" + id + \"-dot\");\n\t\t\t\t\t\tif (dot) {\n\t\t\t\t\t\t\tdot.className = \"inline-block h-2 w-2 rounded-full shrink-0 \" + (dotColor[status] || \"bg-base-content/30\");\n\t\t\t\t\t\t}\n\t\t\t\t\t\tif (status === \"error\") {\n\t\t\t\t\t\t\tvar err = document.getElementById(\"job-\" + id + \"-error\");\n\t\t\t\t\t\t\tif (err && message) {\n\t\t\t\t\t\t\t\terr.innerHTML = '<div class=\"text-xs text-error font-mono break-all\"></div>';\n\t\t\t\t\t\t\t\terr.firstChild.textContent = message;\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t}\n\t\t\t\t\t}\n\n\t\t\t\t\tvar es = new EventSource(\"/jobs/events\");\n\t\t\t\t\tes.addEventListener(\"phase\", function (e) {\n\t\t\t\t\t\tvar d = JSON.parse(e.data);\n\t\t\t\t\t\tphase[d.id] = d.phase || \"\";\n\t\t\t\t\t\tvar label = document.getElementById(\"job-\" + d.id + \"-phase\");\n\t\t\t\t\t\tif (label) { label.textContent = PHASE_LABELS[d.phase] || d.phase; }\n\t\t\t\t\t\trenderRail(d.id, d.phase);\n\t\t\t\t\t});\n\t\t\t\t\tes.addEventListener(\"segment\", function (e) {\n\t\t\t\t\t\tvar d = JSON.parse(e.data);\n\t\t\t\t\t\tvar pct = d.total > 0 ? Math.round((d.done * 100) / d.total) : 0;\n\t\t\t\t\t\tsetPct(d.id, pct);\n\t\t\t\t\t\tif (phase[d.id]) { renderRail(d.id, phase[d.id]); }\n\t\t\t\t\t});\n\t\t\t\t\tes.addEventListener(\"status\", function (e) {\n\t\t\t\t\t\tvar d = JSON.parse(e.data);\n\t\t\t\t\t\tapplyStatus(d.id, d.status, d.message);\n\t\t\t\t\t});\n\t\t\t\t\tes.addEventListener(\"done\", function (e) {\n\t\t\t\t\t\tvar d = JSON.parse(e.data);\n\t\t\t\t\t\tapplyStatus(d.id, d.status, d.message);\n\t\t\t\t\t\tsetPct(d.id, 100);\n\t\t\t\t\t\tif (d.status !== \"error\") { renderRailDone(d.id); }\n\t\t\t\t\t\tvar label = document.getElementById(\"job-\" + d.id + \"-phase\");\n\t\t\t\t\t\tif (label) { label.textContent = d.status === \"error\" ? \"Failed\" : \"Done\"; }\n\t\t\t\t\t});\n\t\t\t\t\t// EventSource auto-reconnects on error; the server re-sends a\n\t\t\t\t\t// snapshot on reconnect so state catches up. Nothing to do here.\n\t\t\t\t\tes.addEventListener(\"error\", function () {});\n\t\t\t\t})();\n\t\t\t</script><script>\n\t\t\t\t// The download flow drives the modal with two HX-Trigger events\n\t\t\t\t// (set by the POST /downloads response header):\n\t\t\t\t//   closeDownloadModal — close the dialog and clear stale form state\n\t\t\t\t//   downloadsUpdated   — refresh the #download-queue partial\n\t\t\t\t// htmx dispatches HX-Trigger events on the requesting element; they\n\t\t\t\t// bubble to document, so a document-level listener always catches them.\n\t\t\t\tdocument.addEventListener(\"closeDownloadModal\", function () {\n\t\t\t\t\tvar d = document.getElementById(\"download-modal\");\n\t\t\t\t\tif (d && d.open) {\n\t\t\t\t\t\td.close();\n\t\t\t\t\t}\n\t\t\t\t\tvar c = document.getElementById(\"download-modal-content\");\n\t\t\t\t\tif (c) {\n\t\t\t\t\t\tc.replaceChildren();\n\t\t\t\t\t}\n\t\t\t\t});\n\t\t\t\tdocument.addEventListener(\"downloadsUpdated\", function () {\n\t\t\t\t\tif (window.htmx) {\n\t\t\t\t\t\thtmx.trigger(\"#download-queue\", \"refresh\");\n\t\t\t\t\t}\n\t\t\t\t});\n\t\t\t</script></body></html>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "<script>\n\t\t\t\t(function () {\n\t\t\t\t\tvar k = \"crdl-theme\";\n\t\t\t\t\tvar t = localStorage.getItem(k);\n\t\t\t\t\tif (t === \"rubberhose\" || t === \"rubberhose-dark\") {\n\t\t\t\t\t\tdocument.documentElement.setAttribute(\"data-theme\", t);\n\t\t\t\t\t}\n\t\t\t\t\twindow.crdlToggleTheme = function () {\n\t\t\t\t\t\tvar cur = document.documentElement.getAttribute(\"data-theme\");\n\t\t\t\t\t\tvar next = cur === \"rubberhose-dark\" ? \"rubberhose\" : \"rubberhose-dark\";\n\t\t\t\t\t\tdocument.documentElement.setAttribute(\"data-theme\", next);\n\t\t\t\t\t\tlocalStorage.setItem(k, next);\n\t\t\t\t\t};\n\t\t\t\t})();\n\t\t\t</script><script>\n\t\t\t\t// One multiplexed /jobs/events stream drives every job card on the\n\t\t\t\t// page (Browse queue, Jobs page). Each SSE event carries the job id\n\t\t\t\t// so the handlers dispatch to the matching card. The server sends a\n\t\t\t\t// snapshot on connect (and on every EventSource reconnect), so a late\n\t\t\t\t// or reconnected client catches up to the current state.\n\t\t\t\t(function () {\n\t\t\t\t\tif (window.__crdlJobs) { return; }\n\t\t\t\t\twindow.__crdlJobs = true;\n\t\t\t\t\tvar dotColor = {\n\t\t\t\t\t\tqueued: \"bg-base-content/30\",\n\t\t\t\t\t\tdownloading: \"bg-primary\",\n\t\t\t\t\t\tmuxing: \"bg-primary\",\n\t\t\t\t\t\tdone: \"bg-success\",\n\t\t\t\t\t\terror: \"bg-error\"\n\t\t\t\t\t};\n\t\t\t\t\tvar badgeClass = {\n\t\t\t\t\t\tqueued: \"badge-ghost\",\n\t\t\t\t\t\tdownloading: \"badge-warning\",\n\t\t\t\t\t\tmuxing: \"badge-info\",\n\t\t\t\t\t\tdone: \"badge-success\",\n\t\t\t\t\t\terror: \"badge-error\"\n\t\t\t\t\t};\n\t\t\t\t\tvar PHASES = [\"subtitles\", \"audio\", \"video\", \"mux\"];\n\t\t\t\t\tvar PHASE_LABELS = {\n\t\t\t\t\t\tsubtitles: \"Fetching subtitles\",\n\t\t\t\t\t\taudio: \"Downloading audio\",\n\t\t\t\t\t\tvideo: \"Downloading segments\",\n\t\t\t\t\t\tmux: \"Converting\"\n\t\t\t\t\t};\n\t\t\t\t\tvar CHIP_BASE = \"inline-flex items-center px-1.5 py-0.5 rounded-field font-mono text-[10px] uppercase tracking-wider border transition-colors \";\n\t\t\t\t\tvar CHIP_DONE = \"border-primary/40 text-primary bg-primary/10\";\n\t\t\t\t\tvar CHIP_ACTIVE = \"border-primary text-primary-content bg-primary rh-blink\";\n\t\t\t\t\tvar CHIP_PENDING = \"border-base-300 text-base-content/40\";\n\t\t\t\t\tvar phase = {};\n\n\t\t\t\t\tfunction chipClass(state) {\n\t\t\t\t\t\tif (state === \"done\") { return CHIP_BASE + CHIP_DONE; }\n\t\t\t\t\t\tif (state === \"active\") { return CHIP_BASE + CHIP_ACTIVE; }\n\t\t\t\t\t\treturn CHIP_BASE + CHIP_PENDING;\n\t\t\t\t\t}\n\t\t\t\t\tfunction renderRail(id, ph) {\n\t\t\t\t\t\tvar idx = PHASES.indexOf(ph);\n\t\t\t\t\t\tfor (var i = 0; i < PHASES.length; i++) {\n\t\t\t\t\t\t\tvar chip = document.getElementById(\"job-\" + id + \"-chip-\" + PHASES[i]);\n\t\t\t\t\t\t\tif (!chip) { continue; }\n\t\t\t\t\t\t\tvar state = \"pending\";\n\t\t\t\t\t\t\tif (idx >= 0) {\n\t\t\t\t\t\t\t\tif (i < idx) { state = \"done\"; }\n\t\t\t\t\t\t\t\telse if (i === idx) { state = \"active\"; }\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\tchip.className = chipClass(state);\n\t\t\t\t\t\t}\n\t\t\t\t\t}\n\t\t\t\t\tfunction renderRailDone(id) {\n\t\t\t\t\t\tfor (var i = 0; i < PHASES.length; i++) {\n\t\t\t\t\t\t\tvar chip = document.getElementById(\"job-\" + id + \"-chip-\" + PHASES[i]);\n\t\t\t\t\t\t\tif (chip) { chip.className = chipClass(\"done\"); }\n\t\t\t\t\t\t}\n\t\t\t\t\t}\n\t\t\t\t\tfunction setPct(id, pct) {\n\t\t\t\t\t\tvar box = document.getElementById(\"job-\" + id + \"-progress\");\n\t\t\t\t\t\tvar bar = box && box.querySelector(\"progress\");\n\t\t\t\t\t\tif (bar) { bar.value = pct; }\n\t\t\t\t\t\tvar span = document.getElementById(\"job-\" + id + \"-pct\");\n\t\t\t\t\t\tif (span) { span.textContent = pct + \"%\"; }\n\t\t\t\t\t}\n\t\t\t\t\tfunction applyStatus(id, status, message) {\n\t\t\t\t\t\tvar badge = document.getElementById(\"job-\" + id + \"-status\");\n\t\t\t\t\t\tif (badge) {\n\t\t\t\t\t\t\tbadge.textContent = status;\n\t\t\t\t\t\t\tbadge.className = \"badge \" + (badgeClass[status] || \"badge-ghost\") + \" badge-sm font-mono shrink-0 ml-auto\";\n\t\t\t\t\t\t}\n\t\t\t\t\t\tvar dot = document.getElementById(\"job-\" + id + \"-dot\");\n\t\t\t\t\t\tif (dot) {\n\t\t\t\t\t\t\tdot.className = \"inline-block h-2.5 w-2.5 rounded-full shrink-0 \" + (dotColor[status] || \"bg-base-content/30\");\n\t\t\t\t\t\t}\n\t\t\t\t\t\tif (status === \"error\") {\n\t\t\t\t\t\t\tvar err = document.getElementById(\"job-\" + id + \"-error\");\n\t\t\t\t\t\t\tif (err && message) {\n\t\t\t\t\t\t\t\terr.innerHTML = '<div class=\"text-xs text-error font-mono break-all\"></div>';\n\t\t\t\t\t\t\t\terr.firstChild.textContent = message;\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t}\n\t\t\t\t\t}\n\n\t\t\t\t\tvar es = new EventSource(\"/jobs/events\");\n\t\t\t\t\tes.addEventListener(\"phase\", function (e) {\n\t\t\t\t\t\tvar d = JSON.parse(e.data);\n\t\t\t\t\t\tphase[d.id] = d.phase || \"\";\n\t\t\t\t\t\tvar label = document.getElementById(\"job-\" + d.id + \"-phase\");\n\t\t\t\t\t\tif (label) { label.textContent = PHASE_LABELS[d.phase] || d.phase; }\n\t\t\t\t\t\trenderRail(d.id, d.phase);\n\t\t\t\t\t});\n\t\t\t\t\tes.addEventListener(\"segment\", function (e) {\n\t\t\t\t\t\tvar d = JSON.parse(e.data);\n\t\t\t\t\t\tvar pct = d.total > 0 ? Math.round((d.done * 100) / d.total) : 0;\n\t\t\t\t\t\tsetPct(d.id, pct);\n\t\t\t\t\t\tif (phase[d.id]) { renderRail(d.id, phase[d.id]); }\n\t\t\t\t\t});\n\t\t\t\t\tes.addEventListener(\"status\", function (e) {\n\t\t\t\t\t\tvar d = JSON.parse(e.data);\n\t\t\t\t\t\tapplyStatus(d.id, d.status, d.message);\n\t\t\t\t\t});\n\t\t\t\t\tes.addEventListener(\"done\", function (e) {\n\t\t\t\t\t\tvar d = JSON.parse(e.data);\n\t\t\t\t\t\tapplyStatus(d.id, d.status, d.message);\n\t\t\t\t\t\tsetPct(d.id, 100);\n\t\t\t\t\t\tif (d.status !== \"error\") { renderRailDone(d.id); }\n\t\t\t\t\t\tvar label = document.getElementById(\"job-\" + d.id + \"-phase\");\n\t\t\t\t\t\tif (label) { label.textContent = d.status === \"error\" ? \"Failed\" : \"Done\"; }\n\t\t\t\t\t});\n\t\t\t\t\t// EventSource auto-reconnects on error; the server re-sends a\n\t\t\t\t\t// snapshot on reconnect so state catches up. Nothing to do here.\n\t\t\t\t\tes.addEventListener(\"error\", function () {});\n\t\t\t\t})();\n\t\t\t</script><script>\n\t\t\t\t// The download flow drives the modal with two HX-Trigger events\n\t\t\t\t// (set by the POST /downloads response header):\n\t\t\t\t//   closeDownloadModal — close the dialog and clear stale form state\n\t\t\t\t//   downloadsUpdated   — refresh the #download-queue partial\n\t\t\t\t// htmx dispatches HX-Trigger events on the requesting element; they\n\t\t\t\t// bubble to document, so a document-level listener always catches them.\n\t\t\t\tdocument.addEventListener(\"closeDownloadModal\", function () {\n\t\t\t\t\tvar d = document.getElementById(\"download-modal\");\n\t\t\t\t\tif (d && d.open) {\n\t\t\t\t\t\td.close();\n\t\t\t\t\t}\n\t\t\t\t\tvar c = document.getElementById(\"download-modal-content\");\n\t\t\t\t\tif (c) {\n\t\t\t\t\t\tc.replaceChildren();\n\t\t\t\t\t}\n\t\t\t\t});\n\t\t\t\tdocument.addEventListener(\"downloadsUpdated\", function () {\n\t\t\t\t\tif (window.htmx) {\n\t\t\t\t\t\thtmx.trigger(\"#download-queue\", \"refresh\");\n\t\t\t\t\t}\n\t\t\t\t});\n\t\t\t</script></body></html>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -105,7 +105,7 @@ func DownloadModalShell() templ.Component {
 			templ_7745c5c3_Var3 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "<dialog id=\"download-modal\" class=\"modal\"><div class=\"modal-box bg-base-100 border border-base-300\"><div id=\"download-modal-content\" hx-on::after-swap=\"if(this.querySelector('form')){var d=document.getElementById('download-modal');if(d&&!d.open){d.showModal();}}\"></div></div><form method=\"dialog\" class=\"modal-backdrop bg-black/60\"><button>close</button></form></dialog>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "<dialog id=\"download-modal\" class=\"modal\"><div class=\"modal-box bg-base-100 rh-sticker\"><div id=\"download-modal-content\" hx-on::after-swap=\"if(this.querySelector('form')){var d=document.getElementById('download-modal');if(d&&!d.open){d.showModal();}}\"></div></div><form method=\"dialog\" class=\"modal-backdrop bg-black/60\"><button>close</button></form></dialog>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -113,9 +113,9 @@ func DownloadModalShell() templ.Component {
 	})
 }
 
-// navbar is the broadcast top bar: an ember brand mark with a condensed label,
-// the section links, and the theme toggle. The bottom ember rule is the channel
-// marker that ties the panel to the transmission-log signature.
+// navbar is the rubber-hose top bar: a hand-drawn film-reel brand mark with the
+// Bungee wordmark, the section links, and a sun/moon theme toggle. A halftone
+// strip + ink rule mark the bottom edge.
 func navbar(active string) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
@@ -137,7 +137,15 @@ func navbar(active string) templ.Component {
 			templ_7745c5c3_Var4 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "<div class=\"sticky top-0 z-20 bg-base-100/95 backdrop-blur border-b border-base-300\"><div class=\"container mx-auto max-w-6xl px-4\"><div class=\"navbar min-h-16 gap-2\"><div class=\"navbar-start gap-2\"><span class=\"inline-block h-7 w-7 rounded-sm bg-primary\"></span> <span class=\"font-display uppercase tracking-widest text-lg font-bold\">Crunchy Downloader</span></div><div class=\"navbar-center gap-1\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "<div class=\"sticky top-0 z-20 bg-base-100/95 backdrop-blur border-b-[3px] border-[var(--rh-edge)]\"><div class=\"container mx-auto max-w-6xl px-4\"><div class=\"navbar min-h-16 gap-2\"><div class=\"navbar-start gap-2 items-center\">")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = iconReel("h-8 w-8 text-primary shrink-0").Render(ctx, templ_7745c5c3_Buffer)
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "<span class=\"font-label uppercase tracking-wider text-lg leading-none\">Crunchy Downloader</span></div><div class=\"navbar-center gap-1\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -153,7 +161,15 @@ func navbar(active string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "</div><div class=\"navbar-end\"><button class=\"btn btn-ghost btn-sm font-mono\" onclick=\"window.crdlToggleTheme()\" title=\"Toggle theme\">◑</button></div></div></div><div class=\"h-px bg-primary/70\"></div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "</div><div class=\"navbar-end\"><button class=\"btn btn-ghost btn-sm rh-press\" onclick=\"window.crdlToggleTheme()\" title=\"Toggle light / dark\" aria-label=\"Toggle theme\">")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = iconTheme("h-5 w-5").Render(ctx, templ_7745c5c3_Buffer)
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "</button></div></div></div><div class=\"h-1.5 rh-halftone opacity-60\"></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -161,8 +177,9 @@ func navbar(active string) templ.Component {
 	})
 }
 
-// navLink is a section link in the broadcast navbar. The active link carries an
-// ember underline marker; inactive links are quiet.
+// navLink is a section link in the rubber-hose navbar. Bungee uppercase label;
+// the active link sits on a primary tab with an ink underline, inactive links
+// are quiet cream.
 func navLink(label, href string, active bool) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
@@ -185,64 +202,64 @@ func navLink(label, href string, active bool) templ.Component {
 		}
 		ctx = templ.ClearChildren(ctx)
 		if active {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "<a class=\"px-3 py-2 font-display uppercase tracking-wider text-sm text-primary border-b-2 border-primary\" href=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "<a class=\"px-3 py-2 font-label uppercase tracking-wider text-xs text-primary-content bg-primary rounded-t-field border-b-[3px] border-[var(--rh-edge)]\" href=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var6 templ.SafeURL
 			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinURLErrs(href)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/layout.templ`, Line: 241, Col: 119}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/layout.templ`, Line: 245, Col: 165}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var7 string
 			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(label)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/layout.templ`, Line: 241, Col: 129}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/layout.templ`, Line: 245, Col: 175}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "</a>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "</a>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "<a class=\"px-3 py-2 font-display uppercase tracking-wider text-sm text-base-content/60 hover:text-base-content border-b-2 border-transparent\" href=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "<a class=\"px-3 py-2 font-label uppercase tracking-wider text-xs text-base-content/70 hover:text-base-content border-b-[3px] border-transparent\" href=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var8 templ.SafeURL
 			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinURLErrs(href)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/layout.templ`, Line: 243, Col: 155}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/layout.templ`, Line: 247, Col: 157}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var9 string
 			templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(label)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/layout.templ`, Line: 243, Col: 165}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/layout.templ`, Line: 247, Col: 167}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "</a>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "</a>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}

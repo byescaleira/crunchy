@@ -1,0 +1,94 @@
+package web
+
+// icons.templ holds the hand-drawn rubber-hose inline-SVG icon set. Each icon
+// is a 24×24 viewBox glyph drawn with a 2.5px round stroke in currentColor — so a
+// single icon recolors via text-* utilities and scales via width/height classes.
+// The strokes are deliberately a touch off-axis (wobble) to read as hand-drawn,
+// not geometric. These are pure presentation: no IDs, no JS hooks, no a11y
+// beyond the title attribute the caller may pass.
+
+// iconReel is the brand mark: a chunky film reel with sprocket holes and a center
+// hub. Used at a large size next to the wordmark in the navbar.
+templ iconReel(class string) {
+	<svg class={ class } viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+		<circle cx="16" cy="16" r="13"/>
+		<circle cx="16" cy="16" r="2.6" fill="currentColor" stroke="none"/>
+		<circle cx="16" cy="6.4" r="2"/>
+		<circle cx="25.6" cy="16" r="2"/>
+		<circle cx="16" cy="25.6" r="2"/>
+		<circle cx="6.4" cy="16" r="2"/>
+	</svg>
+}
+
+// iconTheme is the light/dark toggle glyph: a sun with rays (the cream-light
+// theme's mascot). On the dark theme the same glyph reads as the lit lantern.
+templ iconTheme(class string) {
+	<svg class={ class } viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+		<circle cx="12" cy="12" r="4.2"/>
+		<path d="M12 2.6v2.4M12 19v2.4M2.6 12h2.4M19 12h2.4M5.3 5.3l1.7 1.7M17 17l1.7 1.7M18.7 5.3l-1.7 1.7M7 17l-1.7 1.7"/>
+	</svg>
+}
+
+// iconDownload is a down arrow settling into a tray — the download action.
+templ iconDownload(class string) {
+	<svg class={ class } viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+		<path d="M12 3.2v10.2M7.8 9.6 12 14l4.2-4.4"/>
+		<path d="M4.5 16v3.4A1.6 1.6 0 0 0 6.1 21h11.8a1.6 1.6 0 0 0 1.6-1.6V16"/>
+	</svg>
+}
+
+// iconSearch is the magnifying glass for the unified search box.
+templ iconSearch(class string) {
+	<svg class={ class } viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+		<circle cx="10.4" cy="10.4" r="6"/>
+		<path d="M15 15l5.4 5.4"/>
+	</svg>
+}
+
+// iconGear is the settings cog, for the Settings nav use and form affordances.
+templ iconGear(class string) {
+	<svg class={ class } viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+		<circle cx="12" cy="12" r="3.4"/>
+		<path d="M12 2.6v2.6M12 18.8v2.6M2.6 12h2.6M18.8 12h2.6M5.2 5.2l1.8 1.8M17 17l1.8 1.8M18.8 5.2 17 7M7 17l-1.8 1.8"/>
+	</svg>
+}
+
+// iconClose is the hand-drawn X for the modal Cancel / close affordances.
+templ iconClose(class string) {
+	<svg class={ class } viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+		<path d="M6 6l12 12M18 6 6 18"/>
+	</svg>
+}
+
+// iconCheck is the hand-drawn checkmark for done states and confirmations.
+templ iconCheck(class string) {
+	<svg class={ class } viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+		<path d="M4.6 12.6l4.8 4.8L19.4 7.2"/>
+	</svg>
+}
+
+// iconPlay is the playback triangle, for the "View episodes" affordance.
+templ iconPlay(class string) {
+	<svg class={ class } viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round" aria-hidden="true">
+		<path d="M7.5 5.5v13l11-6.5z" stroke-linecap="round"/>
+	</svg>
+}
+
+// iconSpinner is a hand-drawn three-quarter arc that spins while a job is
+// active. The rh-blink keyframe gives it a gentle flutter; a CSS spin would be
+// too smooth/clinical for the rubber-hose look.
+templ iconSpinner(class string) {
+	<svg class={ class + " rh-blink"} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+		<path d="M12 3.2a8.8 8.8 0 1 0 8.8 8.8" stroke-dasharray="4 3"/>
+	</svg>
+}
+
+// iconClapboard is the film clapperboard mascot used in empty states (no jobs,
+// no episodes). A clapboard + a wobble bar — the 1930s "now showing" cue.
+templ iconClapboard(class string) {
+	<svg class={ class } viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+		<rect x="6" y="14" width="36" height="26" rx="2"/>
+		<path d="M6 14l5-7 8 2-5 7M14 9l8 2M22 11l8 2M30 13l8 2"/>
+		<path d="M14 24h20M14 30h14"/>
+	</svg>
+}

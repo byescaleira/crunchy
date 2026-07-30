@@ -7,63 +7,67 @@ import (
 	"crunchyroll-downloader/internal/media"
 )
 
-// Alert renders a DaisyUI alert in the broadcast register. kind is one of
-// error/success/warning/info. Exported so the server can render it standalone.
+// Alert renders a rubber-hose alert in the broadcast register: an ink-bordered
+// sticker strip with a status dot. kind is one of error/success/warning/info.
+// Exported so the server can render it standalone.
 templ Alert(kind, msg string) {
-	<div class={ "alert " + alertClass(kind) + " rounded-box" }>
-		<span>{ msg }</span>
+	<div class={ "alert rh-sticker-flat " + alertClass(kind) + " rounded-box" }>
+		<span class="font-mono text-sm">{ msg }</span>
 	</div>
 }
 
-// eyebrow is the broadcast section header: a condensed uppercase label with a
-// short ember rule. It marks a section off without a heavy border — the mono
-// caps + the ember rule are the divider. The rule lives below the label.
+// eyebrow is the broadcast section header: a Bungee uppercase label with a
+// primary rule. It marks a section off without a heavy border — the blocky caps
+// + the rule are the divider.
 templ eyebrow(label string) {
 	<div class="flex items-center gap-2">
-		<span class="font-mono text-xs uppercase tracking-widest text-primary/80">{ label }</span>
+		<span class="font-label text-xs uppercase tracking-wider text-primary/80">{ label }</span>
 	</div>
 }
 
 // eyebrowInline is the same eyebrow label without the block treatment, for use
 // inside flex rows (e.g. a card header next to a count).
 templ eyebrowInline(label string) {
-	<span class="font-mono text-xs uppercase tracking-widest text-primary/80">{ label }</span>
+	<span class="font-label text-xs uppercase tracking-wider text-primary/80">{ label }</span>
 }
 
 // DownloadButton opens the download-options modal for a granularity (episode /
 // season / series) and a content id. It hx-gets the form into #download-modal-content;
 // the modal is opened by an after-swap listener on that target in DownloadModalShell
-// (htmx fires htmx:afterSwap on the swap target, not on this button).
+// (htmx fires htmx:afterSwap on the swap target, not on this button). A
+// hand-drawn down-arrow glyph leads the Bungee label; the sticker press-in lands on
+// click.
 templ DownloadButton(kind, id string) {
 	<button
-		class="btn btn-primary btn-sm rounded-field font-display uppercase tracking-wider"
+		class="btn btn-primary btn-sm rh-press rounded-field gap-1.5"
 		hx-get={ "/downloads/new?kind=" + kind + "&id=" + id }
 		hx-target="#download-modal-content"
 		hx-swap="innerHTML"
 	>
-		{ downloadButtonLabel(kind) }
+		@iconDownload("h-4 w-4")
+		<span>{ downloadButtonLabel(kind) }</span>
 	</button>
 }
 
 // seriesHero is the broadcast card for a series: a portrait poster, the title
-// in condensed display type, metadata chips (launch year, categories, available
+// in display type, metadata chips (launch year, categories, available
 // audio/subtitle locales), the synopsis, and the "Download entire series"
 // action. It anchors the Browse page in real Crunchyroll key art — the one
 // place the panel reads unmistakably as an anime tool. Gracefully empty when the
 // series fetch failed (no title/poster).
 templ seriesHero(series media.Series, seriesID string) {
-	<div class="card bg-base-100 border border-base-300 rounded-box overflow-hidden">
+	<div class="card bg-base-100 rh-sticker rounded-box overflow-hidden">
 		<div class="card-body flex-row gap-4 p-4">
 			if img, ok := media.BestImage(series.Images.PosterTall); ok && img.Source != "" {
 				<img
 					src={ img.Source }
 					alt={ series.Title }
-					class="w-28 md:w-36 rounded-box object-cover shrink-0 border border-base-300"
+					class="w-28 md:w-36 rounded-box object-cover shrink-0 border-2 border-[var(--rh-edge)]"
 					loading="lazy"
 				/>
 			}
 			<div class="min-w-0 flex flex-col gap-2">
-				<span class="font-mono text-xs uppercase tracking-widest text-primary/80">Series</span>
+				<span class="font-label text-xs uppercase tracking-wider text-primary/80">Series</span>
 				<h2 class="font-display uppercase text-2xl md:text-3xl leading-tight">
 					if series.Title != "" {
 						{ series.Title }
@@ -122,10 +126,13 @@ templ seasonCard(s media.Season) {
 		</div>
 		<div class="flex gap-1 shrink-0">
 			<button
-				class="btn btn-ghost btn-sm rounded-field font-display uppercase tracking-wider text-xs"
+				class="btn btn-ghost btn-sm rh-press rounded-field gap-1.5 text-xs"
 				hx-get={ "/season/" + s.ID + "/episodes" }
 				hx-target="#episodes"
-			>View</button>
+			>
+				@iconPlay("h-3.5 w-3.5")
+				<span>View</span>
+			</button>
 			@DownloadButton("season", s.ID)
 		</div>
 	</div>
@@ -135,7 +142,7 @@ templ seasonCard(s media.Season) {
 // episode number, title, duration, air date, a premium badge, and the per-row
 // Download button. Replaces the old checkbox table row.
 templ episodeCard(ep media.SeasonEpisode) {
-	<div class="card bg-base-100 border border-base-300 rounded-box overflow-hidden">
+	<div class="card bg-base-100 rh-sticker rounded-box overflow-hidden">
 		if img, ok := media.BestImage(ep.Images.Thumbnail); ok && img.Source != "" {
 			<img src={ img.Source } alt={ ep.Title } class="w-full aspect-video object-cover" loading="lazy"/>
 		} else {
@@ -178,14 +185,15 @@ templ statusBadge(s jobs.Status) {
 	<span class={ "badge " + statusBadgeClass(string(s)) + " badge-sm font-mono" }>{ string(s) }</span>
 }
 
-// jobProgress renders a job's live progress: a phase-weighted ember bar with a
-// mono percentage, a four-step phase rail (SUB · AUDIO · VIDEO · MUX) that lights
-// up as each download phase starts, and a phase-label line that reads like the
+// jobProgress renders a job's live progress: a phase-weighted bar with a mono
+// percentage, a four-step phase rail (SUB · AUDIO · VIDEO · MUX) that lights up
+// as each download phase starts, and a phase-label line that reads like the
 // current phase ("Fetching subtitles", "Downloading audio", "Downloading
 // segments", "Converting"). The bar climbs 0-90 across subtitles/audio/video,
 // sits at 90 through mux, and the done event fills it to 100. Completed chips
-// dim-fill ember, the active chip is a calm solid ember (no blink), future
-// chips stay muted.
+// dim-fill primary, the active chip is a calm solid primary (no blink — the page
+// script adds a gentle rh-blink flutter when the phase goes live), future chips
+// stay muted.
 templ jobProgress(j *jobs.Job) {
 	{{
 		done, total := j.Segment()
@@ -227,9 +235,9 @@ templ jobCard(j *jobs.Job) {
 	<div class="flex flex-col gap-1 py-2.5 border-b border-base-300/70 last:border-b-0" id={ "job-" + j.ID } data-job-sse={ j.ID }>
 		<div class="flex items-start gap-3">
 			if j.ImageURL != "" {
-				<img src={ j.ImageURL } alt={ jobDisplayTitle(j) } class="w-24 aspect-video object-cover rounded shrink-0 border border-base-300 bg-base-300/40" loading="lazy"/>
+				<img src={ j.ImageURL } alt={ jobDisplayTitle(j) } class="w-24 aspect-video object-cover rounded shrink-0 border-2 border-[var(--rh-edge)] bg-base-300/40" loading="lazy"/>
 			} else {
-				<div class="w-24 aspect-video bg-base-300/50 flex items-center justify-center shrink-0 rounded border border-base-300">
+				<div class="w-24 aspect-video bg-base-300/50 flex items-center justify-center shrink-0 rounded border-2 border-[var(--rh-edge)]">
 					<span class="font-mono text-sm text-base-content/30">E{ j.EpisodeNumber }</span>
 				</div>
 			}
@@ -280,9 +288,8 @@ func jobEyebrow(j *jobs.Job) string {
 	return ""
 }
 
-// statusDotClass maps a job status to the dot color: ember while active, green
-// done, red error, muted neutral queued. The dot is a calm solid color (no
-// pulse) — the rubber-hose restyle (Part B) adds a tasteful animated indicator.
+// statusDotClass maps a job status to the dot color: primary while active, green
+// done, red error, muted neutral queued.
 func statusDotClass(s jobs.Status) string {
 	switch string(s) {
 	case "downloading", "muxing":
@@ -342,10 +349,11 @@ func phaseIndex(phase string) int {
 }
 
 // phaseChipClass returns the rail chip class for a phase key given the job's
-// status and current phase. Completed chips dim-fill ember, the active chip is
-// a solid ember (no blink), future chips stay muted. A done job shows every
-// chip completed; an error job shows the phases that already ran as completed
-// and leaves the rest muted (it failed mid-phase).
+// status and current phase. Completed chips dim-fill primary, the active chip is
+// a solid primary (no blink — the page script adds the rh-blink flutter when
+// the phase goes live), future chips stay muted. A done job shows every chip
+// completed; an error job shows the phases that already ran as completed and
+// leaves the rest muted (it failed mid-phase).
 func phaseChipClass(status, current, key string) string {
 	const base = "inline-flex items-center px-1.5 py-0.5 rounded-field font-mono text-[10px] uppercase tracking-wider border transition-colors "
 	const done = "border-primary/40 text-primary bg-primary/10"
