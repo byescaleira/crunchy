@@ -41,7 +41,9 @@ templ SettingsPage(saved bool, errText string) {
 }
 
 // BrowsePage renders the browse panel: a series-URL form whose seasons partial
-// targets #seasons, and an #episodes panel that a season card fills via HTMX.
+// targets #seasons, an #episodes panel that a season card fills via HTMX, and
+// a #download-queue panel that self-loads the current jobs and refreshes when a
+// download is submitted (the modal's downloadsUpdated event triggers "refresh").
 templ BrowsePage(seasons []media.Season, seriesURL string, errText string) {
 	@Layout("Browse", "browse") {
 		<div class="grid gap-4 md:grid-cols-2">
@@ -74,8 +76,14 @@ templ BrowsePage(seasons []media.Season, seriesURL string, errText string) {
 		</div>
 		<div class="mt-4">
 			<h2 class="card-title mb-2">Download jobs</h2>
-			<div id="jobs" class="flex flex-col gap-2">
-				<p class="text-sm text-base-content/50">Select episodes above and start a download.</p>
+			<div
+				id="download-queue"
+				hx-get="/jobs/list"
+				hx-trigger="load, refresh"
+				hx-target="this"
+				hx-swap="innerHTML"
+			>
+				<p class="text-sm text-base-content/50">No jobs yet — start a download from an episode.</p>
 			</div>
 		</div>
 	}
@@ -95,8 +103,8 @@ templ SeasonsList(seasons []media.Season, errText string) {
 }
 
 // EpisodesTable is the HTMX partial swapped into #episodes when a season is
-// selected. It contains the per-episode checkboxes and the quality/language
-// options that POST to /download.
+// selected. Each row carries a per-episode Download button that opens the
+// download-options modal; the option fields themselves live in the modal.
 templ EpisodesTable(episodes []media.SeasonEpisode, errText string) {
 	if errText != "" {
 		@Alert("error", errText)
@@ -104,53 +112,124 @@ templ EpisodesTable(episodes []media.SeasonEpisode, errText string) {
 	if len(episodes) == 0 && errText == "" {
 		<p class="text-sm text-base-content/50">No episodes found.</p>
 	}
-	<form hx-post="/download" hx-target="#jobs" class="flex flex-col gap-3">
-		if len(episodes) > 0 {
-			<div class="overflow-x-auto">
-				<table class="table table-zebra">
-					<thead>
-						<tr><th></th><th>#</th><th>Title</th><th>Audio</th></tr>
-					</thead>
-					<tbody>
-						for _, ep := range episodes {
-							@episodeRow(ep)
-						}
-					</tbody>
-				</table>
-			</div>
-			<div class="flex flex-wrap gap-3">
-				<label class="form-control">
-					<span class="label-text mb-1">Video quality</span>
-					<select name="videoQuality" class="select select-bordered">
-						<option>1080p</option>
-						<option>720p</option>
-						<option>480p</option>
-						<option>360p</option>
-					</select>
-				</label>
-				<label class="form-control">
-					<span class="label-text mb-1">Audio quality</span>
-					<select name="audioQuality" class="select select-bordered">
-						<option>192k</option>
-						<option>128k</option>
-						<option>96k</option>
-					</select>
-				</label>
-			</div>
+	if len(episodes) > 0 {
+		<div class="overflow-x-auto">
+			<table class="table table-zebra">
+				<thead>
+					<tr><th>#</th><th>Title</th><th>Audio</th><th></th></tr>
+				</thead>
+				<tbody>
+					for _, ep := range episodes {
+						@episodeRow(ep)
+					}
+				</tbody>
+			</table>
+		</div>
+	}
+}
+
+// DownloadForm is the body of the download-options modal. It is loaded into
+// #download-modal-content by GET /downloads/new, and posts to /downloads. On a
+// validation error the server re-renders this same template with errs (HTTP 422)
+// so the dialog stays open and shows the errors; on success it returns an empty
+// body + an HX-Trigger that closes the modal and refreshes the queue.
+//
+// opts carries the chosen values (so they survive a 422 re-render); errs maps a
+// field name (or "_") to a message.
+templ DownloadForm(opts DownloadFormOpts, errs map[string]string) {
+	<form
+		hx-post="/downloads"
+		hx-target="#download-modal-content"
+		hx-swap="innerHTML"
+		class="flex flex-col gap-4"
+	>
+		<input type="hidden" name="kind" value={ opts.Kind }/>
+		<input type="hidden" name="id" value={ opts.ID }/>
+		<h3 class="text-lg font-bold">{ opts.Summary }</h3>
+		if errs["_"] != "" {
+			@Alert("error", errs["_"])
+		}
+		<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
 			<label class="form-control">
-				<span class="label-text mb-1">Audio langs (comma-separated, or "all")</span>
-				<input type="text" name="audioLangs" class="input input-bordered w-full" value="ja-JP" placeholder="ja-JP,en-US"/>
+				<span class="label-text mb-1">Video quality</span>
+				<select name="videoQuality" class="select select-bordered">
+					<option value="1080p" selected?={ opts.VideoQuality == "1080p" }>1080p</option>
+					<option value="720p" selected?={ opts.VideoQuality == "720p" }>720p</option>
+					<option value="480p" selected?={ opts.VideoQuality == "480p" }>480p</option>
+					<option value="360p" selected?={ opts.VideoQuality == "360p" }>360p</option>
+				</select>
 			</label>
 			<label class="form-control">
-				<span class="label-text mb-1">Subtitle langs (comma-separated, or "all")</span>
-				<input type="text" name="subsLangs" class="input input-bordered w-full" value="en-US" placeholder="en-US"/>
+				<span class="label-text mb-1">Audio quality</span>
+				<select name="audioQuality" class="select select-bordered">
+					<option value="192k" selected?={ opts.AudioQuality == "192k" }>192k</option>
+					<option value="128k" selected?={ opts.AudioQuality == "128k" }>128k</option>
+					<option value="96k" selected?={ opts.AudioQuality == "96k" }>96k</option>
+				</select>
+			</label>
+		</div>
+		<div class="form-control">
+			<span class="label-text mb-1">Audio languages</span>
+			<div class="flex flex-wrap gap-2">
+				for _, l := range commonAudioLocales {
+					<label class="label cursor-pointer gap-1 border border-base-300 rounded px-2 py-1">
+						<input
+							type="checkbox"
+							name="audioLangs"
+							value={ l }
+							class="checkbox checkbox-primary checkbox-sm"
+							checked?={ containsString(opts.SelectedAudio, l) }
+						/>
+						<span class="label-text">{ l }</span>
+					</label>
+				}
+			</div>
+			if errs["audio"] != "" {
+				<p class="text-error text-xs mt-1">{ errs["audio"] }</p>
+			}
+		</div>
+		<div class="form-control">
+			<span class="label-text mb-1">Subtitle languages</span>
+			<div class="flex flex-wrap gap-2">
+				for _, l := range commonSubLocales {
+					<label class="label cursor-pointer gap-1 border border-base-300 rounded px-2 py-1">
+						<input
+							type="checkbox"
+							name="subsLangs"
+							value={ l }
+							class="checkbox checkbox-primary checkbox-sm"
+							checked?={ containsString(opts.SelectedSubs, l) }
+						/>
+						<span class="label-text">{ l }</span>
+					</label>
+				}
+			</div>
+		</div>
+		<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+			<label class="form-control">
+				<span class="label-text mb-1">File format</span>
+				<select name="format" class="select select-bordered">
+					<option value="mkv" selected?={ opts.Format == "mkv" }>.mkv (Matroska)</option>
+					<option value="mp4" selected?={ opts.Format == "mp4" }>.mp4 (MP4)</option>
+				</select>
 			</label>
 			<label class="form-control">
 				<span class="label-text mb-1">Output directory</span>
-				<input type="text" name="outputDir" class="input input-bordered w-full" placeholder="."/>
+				<input
+					type="text"
+					name="outputDir"
+					class="input input-bordered w-full"
+					value={ opts.OutputDir }
+					placeholder="."
+				/>
 			</label>
-			<button class="btn btn-primary self-start">Download selected</button>
-		}
+		</div>
+		<div class="modal-action">
+			<button class="btn btn-ghost" type="button" onclick="document.getElementById('download-modal').close()">
+				Cancel
+			</button>
+			<button class="btn btn-primary">Download</button>
+		</div>
 	</form>
 }
 

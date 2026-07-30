@@ -33,8 +33,15 @@ type crunchyAPI interface {
 	GetEpisodeInfo(id string) (media.EpisodeInfo, error)
 }
 
-// DownloadOpts carries the user's choices from the /download form into a job.
+// DownloadOpts carries the user's choices from the download-options modal into a
+// job. Kind/ID identify the target (episode/season/series content id); the rest
+// are the option fields. It is shared by the web form (W3) and the JSON API
+// (W6) via the enqueue helper.
 type DownloadOpts struct {
+	Kind  string // "episode" | "season" | "series"
+	ID    string // content id of the target
+	Label string // human-readable job label
+
 	VideoQuality string
 	AudioQuality string
 	AudioLangs   []string
@@ -155,7 +162,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /browse", s.handleBrowse)
 	mux.HandleFunc("POST /browse", s.handleBrowsePost)
 	mux.HandleFunc("GET /season/{id}/episodes", s.handleSeasonEpisodes)
-	mux.HandleFunc("POST /download", s.handleDownload)
+	mux.HandleFunc("GET /downloads/new", s.handleDownloadNew)
+	mux.HandleFunc("POST /downloads", s.handleDownloadPost)
 	mux.HandleFunc("GET /jobs", s.handleJobs)
 	mux.HandleFunc("GET /jobs/list", s.handleJobsList)
 	mux.HandleFunc("GET /jobs/{id}/events", s.handleJobEvents)

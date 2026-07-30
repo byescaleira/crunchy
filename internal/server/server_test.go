@@ -148,8 +148,11 @@ func TestSeasonEpisodes(t *testing.T) {
 	if !strings.Contains(got, "Pilot") || !strings.Contains(got, "Second") {
 		t.Errorf("expected both episode rows, got: %s", got)
 	}
-	if !strings.Contains(got, `value="ep1"`) || !strings.Contains(got, `value="ep2"`) {
-		t.Error("episode checkboxes missing contentId values")
+	// Each row now has a per-episode Download button that opens the modal for
+	// that episode's id, instead of a checkbox. (templ escapes & to &amp; in
+	// attributes, so check the query parts separately.)
+	if !strings.Contains(got, "kind=episode") || !strings.Contains(got, "id=ep1") || !strings.Contains(got, "id=ep2") {
+		t.Errorf("expected per-episode download buttons, got: %s", got)
 	}
 	if !strings.Contains(got, "en-US") {
 		t.Error("dub version locale not rendered as a badge")
@@ -159,27 +162,87 @@ func TestSeasonEpisodes(t *testing.T) {
 	}
 }
 
-func TestDownload_NoSelection(t *testing.T) {
+func TestDownloadNew_RendersForm(t *testing.T) {
 	s := newTestServer(t)
-	s.buildTask = func(string, DownloadOpts) jobs.Task { return func(download.Progress) error { return nil } }
 	h := s.Handler()
-	r, w := postForm("/download", "videoQuality=1080p")
+	r, w := get("/downloads/new?kind=episode&id=ep1")
 	got := body(t, h, r, w)
-	if !strings.Contains(got, "Select at least one") {
-		t.Errorf("expected selection error, got: %s", got)
+	if !strings.Contains(got, `hx-post="/downloads"`) {
+		t.Error("modal form must post to /downloads")
+	}
+	if !strings.Contains(got, `name="kind"`) || !strings.Contains(got, `value="ep1"`) {
+		t.Error("modal form must carry the kind and target id as hidden fields")
+	}
+	if !strings.Contains(got, "Download episode") {
+		t.Errorf("modal summary missing; got: %s", got)
+	}
+	// Audio and subtitle are checkbox groups; format is a select with both opts.
+	if !strings.Contains(got, `name="audioLangs"`) || !strings.Contains(got, `name="subsLangs"`) {
+		t.Error("modal form missing audio/subtitle fields")
+	}
+	if !strings.Contains(got, `value="mkv"`) || !strings.Contains(got, `value="mp4"`) {
+		t.Error("modal form missing format options")
 	}
 }
 
-func TestDownload_EnqueuesPerEpisode(t *testing.T) {
+func TestDownloadPost_NoAudio(t *testing.T) {
 	s := newTestServer(t)
 	s.buildTask = func(string, DownloadOpts) jobs.Task { return func(download.Progress) error { return nil } }
 	h := s.Handler()
-	r, w := postForm("/download",
-		"contentIds=ep1&contentIds=ep2&videoQuality=1080p&audioQuality=192k&audioLangs=ja-JP&subsLangs=en-US")
-	got := body(t, h, r, w)
-	// Two job cards, each opted into SSE via data-job-sse.
-	if n := strings.Count(got, "data-job-sse"); n != 2 {
-		t.Errorf("expected 2 job cards, got %d (data-job-sse count); body: %s", n, got)
+	// kind=episode, an id, but no audio language checked.
+	r, w := postForm("/downloads", "kind=episode&id=ep1&videoQuality=1080p")
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 re-render, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	got := w.Body.String()
+	if !strings.Contains(got, "Pick at least one audio language") {
+		t.Errorf("expected audio validation error, got: %s", got)
+	}
+	// The form is re-rendered, so the dialog stays open.
+	if !strings.Contains(got, `hx-post="/downloads"`) {
+		t.Error("422 should re-render the form into the modal")
+	}
+	if len(s.manager.List()) != 0 {
+		t.Error("validation failure must not enqueue a job")
+	}
+}
+
+func TestDownloadPost_Episode(t *testing.T) {
+	s := newTestServer(t)
+	s.buildTask = func(string, DownloadOpts) jobs.Task { return func(download.Progress) error { return nil } }
+	h := s.Handler()
+	r, w := postForm("/downloads",
+		"kind=episode&id=ep1&videoQuality=1080p&audioQuality=192k&audioLangs=ja-JP&subsLangs=en-US&format=mkv")
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	// Success returns an empty body so the modal content is cleared before close.
+	if w.Body.Len() != 0 {
+		t.Errorf("expected empty body on success, got: %s", w.Body.String())
+	}
+	// The HX-Trigger header closes the modal and refreshes the queue.
+	trig := w.Header().Get("HX-Trigger")
+	if !strings.Contains(trig, "closeDownloadModal") || !strings.Contains(trig, "downloadsUpdated") {
+		t.Errorf("expected HX-Trigger to close modal + refresh queue, got: %q", trig)
+	}
+	if len(s.manager.List()) != 1 {
+		t.Errorf("expected one enqueued job, got %d", len(s.manager.List()))
+	}
+}
+
+func TestDownloadPost_NotConfigured(t *testing.T) {
+	s := newTestServer(t)
+	// No buildTask set: the server has no token.
+	h := s.Handler()
+	r, w := postForm("/downloads", "kind=episode&id=ep1&audioLangs=ja-JP")
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "etp_rt") {
+		t.Errorf("expected 'save token' message, got: %s", w.Body.String())
 	}
 }
 

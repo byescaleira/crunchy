@@ -51,6 +51,57 @@ func alertClass(kind string) string {
 	}
 }
 
+// DownloadFormOpts is the view-model for the download-options modal. It carries
+// the granularity (kind/id), a human summary, the current option values, and the
+// pre-checked audio/subtitle locales. It lives in web (not server) to avoid an
+// import cycle: the server maps its own DownloadOpts onto this for rendering.
+type DownloadFormOpts struct {
+	Kind          string   // "episode" | "season" | "series"
+	ID            string   // content id of the target
+	Summary       string   // headline shown at the top of the modal
+	VideoQuality  string   // selected video quality
+	AudioQuality  string   // selected audio quality
+	Format        string   // "mkv" | "mp4"
+	SelectedAudio []string // checked audio locales
+	SelectedSubs  []string // checked subtitle locales
+	OutputDir     string
+}
+
+// commonAudioLocales is the fixed set offered as audio checkboxes in the modal.
+// These are the most common Crunchyroll dub locales; the user can check several
+// to mux multiple audio tracks into one file.
+var commonAudioLocales = []string{
+	"ja-JP", "en-US", "en-GB", "pt-BR", "es-ES", "es-419", "de-DE", "fr-FR", "it-IT", "ko-KR", "zh-CN",
+}
+
+// commonSubLocales is the fixed set offered as subtitle checkboxes.
+var commonSubLocales = []string{
+	"en-US", "en-GB", "pt-BR", "es-ES", "es-419", "de-DE", "fr-FR", "it-IT", "ko-KR", "zh-CN",
+}
+
+// containsString reports whether ss contains s. Used by the modal to mark a
+// locale checkbox checked.
+func containsString(ss []string, s string) bool {
+	for _, v := range ss {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+// downloadButtonLabel returns the button text for a download granularity.
+func downloadButtonLabel(kind string) string {
+	switch kind {
+	case "season":
+		return "Download season"
+	case "series":
+		return "Download series"
+	default:
+		return "Download"
+	}
+}
+
 // audioLocales returns the distinct audio locales available for an episode: the
 // primary audio locale first, then each dub version's locale (deduped, order
 // preserved).

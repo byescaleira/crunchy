@@ -13,6 +13,23 @@ templ Alert(kind, msg string) {
 	</div>
 }
 
+// DownloadButton opens the download-options modal for a granularity (episode /
+// season / series) and a content id. It hx-gets the form into #download-modal-content
+// and calls showModal() after the swap (so the HTML is in the DOM before the
+// dialog opens). Using hx-on::after-swap — not click — guarantees the form
+// exists when showModal runs.
+templ DownloadButton(kind, id string) {
+	<button
+		class="btn btn-primary btn-sm"
+		hx-get={ "/downloads/new?kind=" + kind + "&id=" + id }
+		hx-target="#download-modal-content"
+		hx-swap="innerHTML"
+		hx-on::after-swap="document.getElementById('download-modal').showModal()"
+	>
+		{ downloadButtonLabel(kind) }
+	</button>
+}
+
 // seasonCard renders one season as a card with a button that loads its episodes
 // into the #episodes target via HTMX.
 templ seasonCard(s media.Season) {
@@ -28,11 +45,10 @@ templ seasonCard(s media.Season) {
 	</div>
 }
 
-// episodeRow renders one episode as a selectable table row. The contentId value
-// is the episode GUID the /download handler enqueues.
+// episodeRow renders one episode as a table row with a per-row Download button
+// that opens the download-options modal for that single episode (kind=episode).
 templ episodeRow(ep media.SeasonEpisode) {
 	<tr>
-		<td><input type="checkbox" class="checkbox checkbox-primary" name="contentIds" value={ ep.ID }/></td>
 		<td class="font-mono whitespace-nowrap">E{ ep.EpisodeNumber }</td>
 		<td>{ ep.Title }</td>
 		<td class="flex flex-wrap gap-1">
@@ -40,6 +56,7 @@ templ episodeRow(ep media.SeasonEpisode) {
 				<span class="badge badge-ghost badge-sm">{ l }</span>
 			}
 		</td>
+		<td>@DownloadButton("episode", ep.ID)</td>
 	</tr>
 }
 
