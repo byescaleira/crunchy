@@ -1,0 +1,39 @@
+{
+  "data": [
+    {
+      "id": "GE00198973JAJP",
+      "title": "Dawn and Confusion",
+      "slug": "dawn-and-confusion",
+      "description": "Top-level synopsis on the data item.",
+      "episode_metadata": {
+        "audio_locale": "ja-JP",
+        "episode_number": 1,
+        "season_number": 1,
+        "series_title": "Hell's Paradise",
+        "series_id": "GJ0H7Q5ZJ",
+        "season_id": "GR9PC507V",
+        "season_title": "Hell's Paradise",
+        "availability_starts": "2023-04-01T00:00:00Z",
+        "availability_ends": "2099-12-31T00:00:00Z",
+        "duration_ms": 1425000,
+        "episode_air_date": "2023-04-01T00:00:00Z",
+        "is_premium_only": true,
+        "maturity_ratings": ["TV-MA"],
+        "subtitle_locales": ["en-US", "es-419", "pt-BR"],
+        "sequence_number": 1.0,
+        "versions": [
+          {"guid": "GV1", "audio_locale": "ja-JP"},
+          {"guid": "GV2", "audio_locale": "en-US"}
+        ],
+        "images": {
+          "thumbnail": [
+            [
+              {"source": "https://cdn/320x180.jpg", "type": "image/jpeg", "width": 320, "height": 180},
+              {"source": "https://cdn/1920x1080.jpg", "type": "image/jpeg", "width": 1920, "height": 1080}
+            ]
+          ]
+        }
+      }
+    }
+  ]
+}

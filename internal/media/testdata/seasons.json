@@ -1,0 +1,16 @@
+{
+  "data": [
+    {
+      "id": "GR9PC507V",
+      "season_number": 1,
+      "title": "Hell's Paradise",
+      "slug_title": "hells-paradise",
+      "description": "First season.",
+      "is_complete": true,
+      "number_of_episodes": 13,
+      "audio_locales": ["ja-JP", "en-US"],
+      "subtitle_locales": ["en-US", "pt-BR"],
+      "keywords": ["action"]
+    }
+  ]
+}

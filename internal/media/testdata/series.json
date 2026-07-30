@@ -1,0 +1,40 @@
+{
+  "data": [
+    {
+      "id": "GJ0H7Q5ZJ",
+      "channel_id": "crunchyroll",
+      "content_provider": "Crunchyroll",
+      "slug": "hells-paradise",
+      "title": "Hell's Paradise",
+      "slug_title": "hells-paradise",
+      "description": "Short series synopsis.",
+      "extended_description": "Extended series synopsis.",
+      "series_launch_year": 2023,
+      "episode_count": 13,
+      "season_count": 1,
+      "media_count": 13,
+      "keywords": ["action", "supernatural"],
+      "tenant_categories": ["Action", "Supernatural"],
+      "audio_locales": ["ja-JP", "en-US"],
+      "subtitle_locales": ["en-US", "pt-BR"],
+      "maturity_ratings": ["TV-MA"],
+      "awards": [
+        {"icon_url": "https://cdn/award.png", "text": "Anime of the Year", "is_current_award": true, "is_winner": true}
+      ],
+      "images": {
+        "poster_tall": [
+          [
+            {"source": "https://cdn/60x90.jpg", "type": "image/jpeg", "width": 60, "height": 90},
+            {"source": "https://cdn/1560x2340.jpg", "type": "image/jpeg", "width": 1560, "height": 2340}
+          ]
+        ],
+        "poster_wide": [
+          [
+            {"source": "https://cdn/320x180.jpg", "type": "image/jpeg", "width": 320, "height": 180},
+            {"source": "https://cdn/1920x1080.jpg", "type": "image/jpeg", "width": 1920, "height": 1080}
+          ]
+        ]
+      }
+    }
+  ]
+}

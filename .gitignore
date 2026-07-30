@@ -7,3 +7,7 @@ client_id.bin
 private_key.pem
 
 *.mkv
+# Local server runtime data (holds the sensitive etp_rt token) and built binary
+.crunchy-data/
+/crunchy-server
+/crunchyroll-downloader
