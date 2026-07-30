@@ -182,16 +182,29 @@ templ Layout(title, active string) {
 						htmx.trigger("#download-queue", "refresh");
 					}
 				});
-				// jobsChanged is fired by the per-card cancel/delete/restart handlers.
-				// Unlike downloadsUpdated (which targets #download-queue on Browse),
-				// this refreshes whichever jobs container is present — #download-queue on
-				// the Browse page OR #jobs-list on the Jobs page — so retry/delete work
-				// from either page. htmx.ajax re-fetches /jobs/list into that container.
-				document.addEventListener("jobsChanged", function () {
+				// refreshJobs re-fetches /jobs/list into whichever jobs container is
+				// present (#download-queue on Browse, #jobs-list on Jobs). It is the
+				// authoritative snapshot of every job's current status/progress, so it is
+				// used both after a per-card cancel/delete/restart (jobsChanged) and when
+				// the tab becomes visible again (visibilitychange) — see below.
+				function refreshJobs() {
 					if (!window.htmx) { return; }
 					var t = document.getElementById("download-queue") || document.getElementById("jobs-list");
 					if (t) {
 						htmx.ajax("GET", "/jobs/list", { target: t, swap: "innerHTML" });
+					}
+				}
+				// jobsChanged is fired by the per-card cancel/delete/restart handlers.
+				document.addEventListener("jobsChanged", refreshJobs);
+				// When the tab is backgrounded, the browser throttles the EventSource
+				// delivery + the JS event loop, so the live progress bar freezes even
+				// though the server-side downloads keep running. On return, instead of
+				// waiting for the throttled live events to flush, snap straight to the
+				// server's authoritative state — the bar jumps to where the download
+				// actually is, confirming it never stopped.
+				document.addEventListener("visibilitychange", function () {
+					if (!document.hidden) {
+						refreshJobs();
 					}
 				});
 			</script>

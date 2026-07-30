@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"crunchyroll-downloader/internal/jobs"
 )
@@ -62,10 +63,22 @@ func (s *Server) handleJobsEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	flusher.Flush()
 
+	// keepalive emits an SSE comment (a line starting with ":") every 20s.
+	// EventSource ignores comment lines, so this carries no event payload — its
+	// only job is to keep the connection from going idle. A backgrounded browser
+	// tab can drop an idle EventSource (or delay its auto-reconnect), and a long
+	// idle gap also lets intermediaries time the stream out; the comment + flush
+	// prevents both, so the stream survives a backgrounded tab and a quiet queue.
+	keepalive := time.NewTicker(20 * time.Second)
+	defer keepalive.Stop()
+
 	for {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-keepalive.C:
+			fmt.Fprintf(w, ": keepalive\n\n")
+			flusher.Flush()
 		case ev, ok := <-ch:
 			if !ok {
 				return
