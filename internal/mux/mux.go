@@ -91,8 +91,9 @@ func BuildMergeArgs(videoFile string, audioTracks, subTracks []MediaTrack, outpu
 }
 
 // Merge merges the video, all audio tracks and all subtitle tracks into a
-// single MKV container.
-func Merge(videoFile string, audioTracks, subTracks []MediaTrack, outputFile string, info media.EpisodeInfo) {
+// single MKV container. It returns an error (instead of panicking) when ffmpeg
+// fails, so the caller can clean up and report.
+func Merge(videoFile string, audioTracks, subTracks []MediaTrack, outputFile string, info media.EpisodeInfo) error {
 	args := BuildMergeArgs(videoFile, audioTracks, subTracks, outputFile, info)
 
 	cmd := exec.Command("ffmpeg", args...)
@@ -100,7 +101,7 @@ func Merge(videoFile string, audioTracks, subTracks []MediaTrack, outputFile str
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		_ = os.Remove(outputFile)
-		panic(fmt.Sprintf("ffmpeg failed: %s\n%s", err, stderr.String()))
+		return fmt.Errorf("ffmpeg failed: %s\n%s", err, stderr.String())
 	}
 
 	// Remove temporary files
@@ -113,4 +114,5 @@ func Merge(videoFile string, audioTracks, subTracks []MediaTrack, outputFile str
 	}
 
 	fmt.Printf("\nDownload finished! Output file: %s\n\n", outputFile)
+	return nil
 }

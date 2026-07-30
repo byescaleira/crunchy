@@ -31,16 +31,17 @@ import (
 	"crunchyroll-downloader/internal/output"
 )
 
-// API is the slice of the Crunchyroll client that Episode/Season need. The
-// concrete *crunchy.Client satisfies it; tests substitute a fake to exercise
-// the orchestration without network, Widevine, or ffmpeg.
+// API is the slice of the Crunchyroll client that Episode/Season need. Every
+// method returns an error instead of panicking/os.Exit, so a single bad episode
+// or transport blip no longer aborts the whole batch. The concrete
+// *crunchy.Client satisfies it; tests substitute a fake.
 type API interface {
-	GetEpisode(id string) media.Episode
-	GetEpisodeInfo(id string) media.EpisodeInfo
-	GetSeasons(contentId, audioLocale, subLocale string) []media.Season
-	GetSeasonEpisodes(contentId, audioLocale, subLocale string) []media.SeasonEpisode
-	DeleteStream(contentId, sToken string) bool
-	ParseManifest(url string) *mpd.MPD
+	GetEpisode(id string) (media.Episode, error)
+	GetEpisodeInfo(id string) (media.EpisodeInfo, error)
+	GetSeasons(contentId, audioLocale, subLocale string) ([]media.Season, error)
+	GetSeasonEpisodes(contentId, audioLocale, subLocale string) ([]media.SeasonEpisode, error)
+	DeleteStream(contentId, sToken string) (bool, error)
+	ParseManifest(url string) (*mpd.MPD, error)
 	GetLicense(psshData, contentId, videoToken string) ([]*widevine.Key, error)
 }
 
@@ -61,8 +62,8 @@ type Downloader struct {
 	// network, Widevine, or ffmpeg. They default to the real implementations
 	// the first time a download runs (see ensureSeams).
 	downloadTrack     func(baseUrl, representationId *string, set *mpd.AdaptationSet, keys []*widevine.Key) (string, error)
-	downloadSubtitles func(url string) string
-	merge             func(videoFile string, audioTracks, subTracks []mux.MediaTrack, outputFile string, info media.EpisodeInfo)
+	downloadSubtitles func(url string) (string, error)
+	merge             func(videoFile string, audioTracks, subTracks []mux.MediaTrack, outputFile string, info media.EpisodeInfo) error
 }
 
 // workers returns the configured segment-download parallelism, defaulting to 10
@@ -84,7 +85,7 @@ func (d *Downloader) ensureSeams() {
 		d.downloadTrack = d.downloadParts
 	}
 	if d.downloadSubtitles == nil {
-		d.downloadSubtitles = func(url string) string { return downloadSubs(d.HTTP, url) }
+		d.downloadSubtitles = func(url string) (string, error) { return downloadSubs(d.HTTP, url) }
 	}
 	if d.merge == nil {
 		d.merge = mux.Merge
@@ -323,34 +324,37 @@ func decryptSegmentsToFile(initData []byte, segFiles []string, outputFile string
 	return nil
 }
 
-func downloadSubs(doer crunchy.Doer, url string) string {
+func downloadSubs(doer crunchy.Doer, url string) (string, error) {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		panic(err)
+		return "", err
 	}
 	req.Header.Set("User-Agent", crunchy.UserAgent)
 	req.Header.Set("Origin", "https://static.crunchyroll.com")
 	req.Header.Set("Referer", "https://static.crunchyroll.com/")
 	resp, err := doer.Do(req)
 	if err != nil {
-		panic(err)
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		panic(err)
+		return "", err
 	}
 
 	filename := getFilename(nil)
 	file, err := os.Create(filename)
 	if err != nil {
-		panic(err)
+		return "", err
 	}
-	file.Write(body)
+	if _, err := file.Write(body); err != nil {
+		file.Close()
+		return "", err
+	}
 	file.Close()
 
-	return filename
+	return filename, nil
 }
 
 // Episode downloads and muxes a single episode: its subtitles, every requested
@@ -358,12 +362,17 @@ func downloadSubs(doer crunchy.Doer, url string) string {
 // episode. It mutates copies of the language selections (so "all" expands per
 // episode), leaving the Downloader's fields untouched for the next episode.
 //
+// Every failure is returned as an error instead of panicking, so Season (and the
+// server's job runner) can log it and move on. The activeStreams cleanup still
+// runs via defer; a best-effort stream release must never be skipped because the
+// download itself failed.
+//
 // The Widevine keys-ordering invariant is enforced structurally here: each
 // version's keys are loop-local (versionKeys), and the audio for version i is
 // downloaded (and thus decrypted) synchronously before the loop advances to
 // version i+1's GetLicense. The video track is downloaded once with version 0's
 // keys.
-func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) {
+func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) error {
 	d.ensureSeams()
 
 	cleanSeriesTitle := output.Sanitize(info.EpisodeMetadata.SeriesTitle)
@@ -386,7 +395,7 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) {
 
 	if _, err := os.Stat(outputFile); err == nil {
 		fmt.Printf("Episode %v is already downloaded, skipping...\n", info.EpisodeMetadata.EpisodeNumber)
-		return
+		return nil
 	}
 
 	// Copy the language lists so the "all" expansion below is local to this
@@ -430,7 +439,7 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) {
 		guid, ok := guidByLocale[locale]
 		if !ok {
 			fmt.Printf("! Audio locale %s is not available for episode %v, aborting this episode.\n", locale, info.EpisodeMetadata.EpisodeNumber)
-			return
+			return nil
 		}
 		versions = append(versions, audioVersion{locale: locale, contentId: guid})
 	}
@@ -438,22 +447,23 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) {
 	fmt.Printf("Downloading: %s (S%02vE%02v) from %s\n", info.Title, info.EpisodeMetadata.SeasonNumber, info.EpisodeMetadata.EpisodeNumber, info.EpisodeMetadata.SeriesTitle)
 
 	// activeStreams tracks every playback token we open so we can release them
-	// all if anything fails partway through.
+	// all if anything fails partway through. The release is best-effort: a
+	// transport error here must not mask the real download error returned below.
 	activeStreams := map[string]string{}
 	defer func() {
 		fmt.Print("Cleaning up...")
 
 		for id, sToken := range activeStreams {
-			d.API.DeleteStream(id, sToken)
-		}
-		if r := recover(); r != nil {
-			fmt.Printf("Recovered from error: %v\n", r)
+			_, _ = d.API.DeleteStream(id, sToken)
 		}
 	}()
 
 	// Fetch the first version's playback first so we can validate subtitle
 	// availability before downloading anything heavy.
-	firstEpisode := d.API.GetEpisode(versions[0].contentId)
+	firstEpisode, err := d.API.GetEpisode(versions[0].contentId)
+	if err != nil {
+		return err
+	}
 	activeStreams[versions[0].contentId] = firstEpisode.Token
 
 	if len(subsLangs) == 1 && subsLangs[0] == "all" {
@@ -471,14 +481,18 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) {
 	for _, locale := range subsLangs {
 		if firstEpisode.Subtitles[locale] == nil {
 			fmt.Printf("! Subtitle locale %s is not available for episode %v, aborting this episode.\n", locale, info.EpisodeMetadata.EpisodeNumber)
-			return
+			return nil
 		}
 	}
 
 	var subTracks []mux.MediaTrack
 	for _, locale := range subsLangs {
 		fmt.Printf("Downloading subtitles for %s...\n", output.TrackTitle(locale))
-		subTracks = append(subTracks, mux.MediaTrack{File: d.downloadSubtitles(firstEpisode.Subtitles[locale].URL), Locale: locale})
+		f, err := d.downloadSubtitles(firstEpisode.Subtitles[locale].URL)
+		if err != nil {
+			return err
+		}
+		subTracks = append(subTracks, mux.MediaTrack{File: f, Locale: locale})
 	}
 	if len(subTracks) > 0 {
 		fmt.Println("Downloaded subtitles!")
@@ -490,34 +504,40 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) {
 	for i, version := range versions {
 		episode := firstEpisode
 		if i > 0 {
-			episode = d.API.GetEpisode(version.contentId)
+			episode, err = d.API.GetEpisode(version.contentId)
+			if err != nil {
+				return err
+			}
 			activeStreams[version.contentId] = episode.Token
 		}
 
-		manifestData := d.API.ParseManifest(episode.ManifestURL)
+		manifestData, err := d.API.ParseManifest(episode.ManifestURL)
+		if err != nil {
+			return err
+		}
 		pssh := manifest.GetPSSH(manifestData)
 		if pssh == nil {
-			panic("PSSH not found")
+			return fmt.Errorf("PSSH not found")
 		}
 		// GetLicense returns this version's keys; audio for this version must be
 		// downloaded before the next license so the keys still match.
 		versionKeys, err := d.API.GetLicense(*pssh, version.contentId, episode.Token)
 		if err != nil {
-			panic(fmt.Sprintf("getLicense for %s: %s", version.locale, err))
+			return fmt.Errorf("getLicense for %s: %s", version.locale, err)
 		}
 
 		audioSet, err := manifest.FindAdaptationSet(manifestData, "audio")
 		if err != nil {
-			panic(fmt.Sprintf("audio set: %s", err))
+			return fmt.Errorf("audio set: %s", err)
 		}
 		fmt.Printf("Downloading %s audio...\n", output.TrackTitle(version.locale))
 		audioBaseUrl, audioRepresentationId := manifest.GetBaseURL(audioSet, false, *audioQuality)
 		if audioBaseUrl == nil {
-			panic(fmt.Sprintf("failed to get the audio base URL for %s, maybe the audio quality you entered is wrong?", version.locale))
+			return fmt.Errorf("failed to get the audio base URL for %s, maybe the audio quality you entered is wrong?", version.locale)
 		}
 		audioFile, err := d.downloadTrack(audioBaseUrl, audioRepresentationId, audioSet, versionKeys)
 		if err != nil {
-			panic(err)
+			return err
 		}
 		audioTracks = append(audioTracks, mux.MediaTrack{File: audioFile, Locale: version.locale})
 
@@ -526,31 +546,32 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) {
 		if i == 0 {
 			videoSet, err := manifest.FindAdaptationSet(manifestData, "video")
 			if err != nil {
-				panic(fmt.Sprintf("video set: %s", err))
+				return fmt.Errorf("video set: %s", err)
 			}
 			fmt.Println("Downloading video...")
 			baseUrl, representationId := manifest.GetBaseURL(videoSet, true, *videoQuality)
 			if baseUrl == nil {
-				panic("failed to get the video base URL, maybe the video quality you entered is wrong?")
+				return fmt.Errorf("failed to get the video base URL, maybe the video quality you entered is wrong?")
 			}
 			videoFile, err = d.downloadTrack(baseUrl, representationId, videoSet, versionKeys)
 			if err != nil {
-				panic(err)
+				return err
 			}
 		}
 
-		if success := d.API.DeleteStream(version.contentId, episode.Token); !success {
+		if success, _ := d.API.DeleteStream(version.contentId, episode.Token); !success {
 			fmt.Print("Failed to remove the player stream, you will probably have issues downloading other episodes.\n")
 		}
 		delete(activeStreams, version.contentId)
 	}
 
-	d.merge(videoFile, audioTracks, subTracks, outputFile, info)
+	return d.merge(videoFile, audioTracks, subTracks, outputFile, info)
 }
 
 // Season downloads every episode in a season list, building each episode's
-// EpisodeInfo from its SeasonEpisode entry.
-func (d *Downloader) Season(episodes []media.SeasonEpisode) {
+// EpisodeInfo from its SeasonEpisode entry. A failed episode is logged and
+// skipped so one bad episode can't abort the whole season.
+func (d *Downloader) Season(episodes []media.SeasonEpisode) error {
 	fmt.Printf("Downloading season %v of %s (%v episodes)\n\n", episodes[0].SeasonNumber, episodes[0].SeriesTitle, len(episodes))
 
 	for _, episode := range episodes {
@@ -566,6 +587,10 @@ func (d *Downloader) Season(episodes []media.SeasonEpisode) {
 			Title: episode.Title,
 		}
 
-		d.Episode(episode.ID, info)
+		if err := d.Episode(episode.ID, info); err != nil {
+			fmt.Printf("! Episode %v failed: %v\n", episode.EpisodeNumber, err)
+			continue
+		}
 	}
+	return nil
 }

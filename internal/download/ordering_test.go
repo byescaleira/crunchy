@@ -34,16 +34,20 @@ func (f *fakeAPI) record(e event) {
 	f.mu.Unlock()
 }
 
-func (f *fakeAPI) GetEpisode(id string) media.Episode {
-	return media.Episode{ManifestURL: "manifest", Token: "tok-" + id}
+func (f *fakeAPI) GetEpisode(id string) (media.Episode, error) {
+	return media.Episode{ManifestURL: "manifest", Token: "tok-" + id}, nil
 }
-func (f *fakeAPI) GetEpisodeInfo(id string) media.EpisodeInfo       { return media.EpisodeInfo{} }
-func (f *fakeAPI) GetSeasons(string, string, string) []media.Season { return nil }
-func (f *fakeAPI) GetSeasonEpisodes(string, string, string) []media.SeasonEpisode {
-	return nil
+func (f *fakeAPI) GetEpisodeInfo(id string) (media.EpisodeInfo, error) {
+	return media.EpisodeInfo{}, nil
 }
-func (f *fakeAPI) DeleteStream(string, string) bool { return true }
-func (f *fakeAPI) ParseManifest(string) *mpd.MPD    { return f.manifest }
+func (f *fakeAPI) GetSeasons(string, string, string) ([]media.Season, error) {
+	return nil, nil
+}
+func (f *fakeAPI) GetSeasonEpisodes(string, string, string) ([]media.SeasonEpisode, error) {
+	return nil, nil
+}
+func (f *fakeAPI) DeleteStream(string, string) (bool, error) { return true, nil }
+func (f *fakeAPI) ParseManifest(string) (*mpd.MPD, error)    { return f.manifest, nil }
 func (f *fakeAPI) GetLicense(psshData, contentId, videoToken string) ([]*widevine.Key, error) {
 	idx := len(f.events) // before recording
 	keys := []*widevine.Key{{Type: widevinepb.License_KeyContainer_CONTENT, Key: []byte{byte(idx)}}}
@@ -106,9 +110,10 @@ func TestDownloadEpisode_VersionKeyOrdering(t *testing.T) {
 		api.record(event{kind: kind, keys: keys})
 		return "track-" + kind, nil
 	}
-	d.downloadSubtitles = func(url string) string { return "subs.ass" }
-	d.merge = func(videoFile string, audioTracks, subTracks []mux.MediaTrack, outputFile string, info media.EpisodeInfo) {
+	d.downloadSubtitles = func(url string) (string, error) { return "subs.ass", nil }
+	d.merge = func(videoFile string, audioTracks, subTracks []mux.MediaTrack, outputFile string, info media.EpisodeInfo) error {
 		api.record(event{kind: "merge"})
+		return nil
 	}
 
 	info := media.EpisodeInfo{
@@ -122,7 +127,9 @@ func TestDownloadEpisode_VersionKeyOrdering(t *testing.T) {
 		},
 	}
 
-	d.Episode("baseId", info)
+	if err := d.Episode("baseId", info); err != nil {
+		t.Fatalf("Episode returned error: %v (events: %v)", err, eventKinds(api.events))
+	}
 
 	events := api.events
 	// Expected order: license0, audio0, video0, license1, audio1, merge.

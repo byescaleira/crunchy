@@ -37,11 +37,15 @@ func parseLangs(s string) []string {
 	return out
 }
 
-func processUrl(c *crunchy.Client, url string, d *download.Downloader, seasonNumber int) {
+// processUrl resolves one URL to its content and drives the download over d.
+// It returns an error for any non-recoverable failure so main's batch loop can
+// log it and continue to the next URL instead of aborting the whole run. The
+// per-episode and per-season error boundaries (one bad episode skipping the
+// rest) live inside download.Downloader.
+func processUrl(c *crunchy.Client, url string, d *download.Downloader, seasonNumber int) error {
 	contentType, contentId, err := crunchy.ParseContentURL(url)
 	if err != nil {
-		fmt.Println(err)
-		return
+		return err
 	}
 
 	// The season/series API endpoints take a single preferred locale; use the
@@ -54,35 +58,48 @@ func processUrl(c *crunchy.Client, url string, d *download.Downloader, seasonNum
 	}
 
 	if contentType == "watch" {
-		info := c.GetEpisodeInfo(contentId)
-		d.Episode(contentId, info)
-	} else {
-		seasons := c.GetSeasons(contentId, primaryAudio, primarySubs)
+		info, err := c.GetEpisodeInfo(contentId)
+		if err != nil {
+			return err
+		}
+		return d.Episode(contentId, info)
+	}
 
-		if seasonNumber != 0 {
-			var seasonId string
-			for _, season := range seasons {
-				if season.SeasonNumber == seasonNumber {
-					seasonId = season.ID
-					break
-				}
-			}
-			if seasonId == "" {
-				fmt.Printf("This anime has no season %v!\n", seasonNumber)
-				return
-			}
+	seasons, err := c.GetSeasons(contentId, primaryAudio, primarySubs)
+	if err != nil {
+		return err
+	}
 
-			episodes := c.GetSeasonEpisodes(seasonId, primaryAudio, primarySubs)
-			d.Season(episodes)
-		} else {
-			fmt.Print("No season number specified, downloading all seasons...\n")
-
-			for _, season := range seasons {
-				episodes := c.GetSeasonEpisodes(season.ID, primaryAudio, primarySubs)
-				d.Season(episodes)
+	if seasonNumber != 0 {
+		var seasonId string
+		for _, season := range seasons {
+			if season.SeasonNumber == seasonNumber {
+				seasonId = season.ID
+				break
 			}
 		}
+		if seasonId == "" {
+			return fmt.Errorf("This anime has no season %v!", seasonNumber)
+		}
+
+		episodes, err := c.GetSeasonEpisodes(seasonId, primaryAudio, primarySubs)
+		if err != nil {
+			return err
+		}
+		return d.Season(episodes)
 	}
+
+	fmt.Print("No season number specified, downloading all seasons...\n")
+	for _, season := range seasons {
+		episodes, err := c.GetSeasonEpisodes(season.ID, primaryAudio, primarySubs)
+		if err != nil {
+			return err
+		}
+		if err := d.Season(episodes); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func main() {
@@ -141,10 +158,15 @@ func main() {
 		fmt.Printf("Found %d URLs to download\n\n", len(urls))
 		for i, u := range urls {
 			fmt.Printf("=== [%d/%d] %s ===\n", i+1, len(urls), u)
-			processUrl(client, u, d, *seasonNumber)
+			if err := processUrl(client, u, d, *seasonNumber); err != nil {
+				fmt.Printf("! %s failed: %v\n", u, err)
+			}
 			fmt.Println()
 		}
 	} else {
-		processUrl(client, *url, d, *seasonNumber)
+		if err := processUrl(client, *url, d, *seasonNumber); err != nil {
+			fmt.Printf("! %s\n", err)
+			os.Exit(1)
+		}
 	}
 }

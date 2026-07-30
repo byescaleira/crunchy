@@ -11,7 +11,7 @@ import (
 
 // GetSeasonEpisodes lists the episodes of a season, using the given preferred
 // audio and subtitle locales (each defaulting when empty).
-func (c *Client) GetSeasonEpisodes(contentId string, audio_locale string, sub_locale string) []media.SeasonEpisode {
+func (c *Client) GetSeasonEpisodes(contentId string, audio_locale string, sub_locale string) ([]media.SeasonEpisode, error) {
 	if audio_locale == "" {
 		audio_locale = "ja-JP"
 	}
@@ -22,28 +22,28 @@ func (c *Client) GetSeasonEpisodes(contentId string, audio_locale string, sub_lo
 
 	req, err := c.CrunchyRequest(http.MethodGet, fmt.Sprintf("https://www.crunchyroll.com/content/v2/cms/seasons/%s/episodes?preferred_audio_language=%s&locale=%s", contentId, audio_locale, sub_locale), nil, true)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	resp, err := c.Do(req)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 	var episodes media.SeasonEpisodes
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	if err = json.Unmarshal(body, &episodes); err != nil {
-		panic(err)
+		return nil, err
 	}
 
-	return episodes.Data
+	return episodes.Data, nil
 }
 
 // GetSeasons lists the seasons of a series, using the given preferred audio and
 // subtitle locales (each defaulting when empty).
-func (c *Client) GetSeasons(contentId string, audioLocale string, subLocale string) []media.Season {
+func (c *Client) GetSeasons(contentId string, audioLocale string, subLocale string) ([]media.Season, error) {
 	if audioLocale == "" {
 		audioLocale = "ja-JP"
 	}
@@ -54,21 +54,21 @@ func (c *Client) GetSeasons(contentId string, audioLocale string, subLocale stri
 
 	req, err := c.CrunchyRequest(http.MethodGet, fmt.Sprintf("https://www.crunchyroll.com/content/v2/cms/series/%s/seasons?force_locale=&preferred_audio_language=%s&locale=%s", contentId, audioLocale, subLocale), nil, true)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	resp, err := c.Do(req)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 	var seasons media.Seasons
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	if err = json.Unmarshal(body, &seasons); err != nil {
-		panic(err)
+		return nil, err
 	}
 
-	return seasons.Data
+	return seasons.Data, nil
 }
