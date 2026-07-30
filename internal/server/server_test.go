@@ -417,3 +417,190 @@ func TestSSE_UnknownJob(t *testing.T) {
 		t.Errorf("expected 404 for unknown job, got %d", w.Code)
 	}
 }
+
+// postJSON builds a POST request with a JSON body for the /api/* tests.
+func postJSON(target, body string) (*http.Request, *httptest.ResponseRecorder) {
+	r := httptest.NewRequest(http.MethodPost, target, strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	return r, httptest.NewRecorder()
+}
+
+func TestAPIHealth(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler()
+	r, w := get("/api/health")
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	got := w.Body.String()
+	if !strings.Contains(got, `"ok"`) {
+		t.Errorf("health body missing ok: %s", got)
+	}
+	if !strings.Contains(got, `"version"`) {
+		t.Errorf("health body missing version: %s", got)
+	}
+	if !strings.Contains(w.Header().Get("Content-Type"), "application/json") {
+		t.Error("health should return JSON content type")
+	}
+}
+
+func TestAPIDownload_Happy(t *testing.T) {
+	s := newTestServer(t)
+	s.buildTask = func(string, DownloadOpts) jobs.Task {
+		return func(download.Progress) error { return nil }
+	}
+	h := s.Handler()
+	r, w := postJSON(`/api/download`, `{"kind":"episode","id":"ep1","audio":["ja-JP"]}`)
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	got := w.Body.String()
+	if !strings.Contains(got, `"jobId"`) {
+		t.Errorf("expected jobId in body, got: %s", got)
+	}
+	if len(s.manager.List()) != 1 {
+		t.Errorf("expected one enqueued job, got %d", len(s.manager.List()))
+	}
+}
+
+func TestAPIDownload_NoAudio(t *testing.T) {
+	s := newTestServer(t)
+	s.buildTask = func(string, DownloadOpts) jobs.Task {
+		return func(download.Progress) error { return nil }
+	}
+	h := s.Handler()
+	r, w := postJSON(`/api/download`, `{"kind":"episode","id":"ep1","audio":[]}`)
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"error"`) {
+		t.Errorf("expected error field, got: %s", w.Body.String())
+	}
+	if len(s.manager.List()) != 0 {
+		t.Error("validation failure must not enqueue a job")
+	}
+}
+
+func TestAPIDownload_NotConfigured(t *testing.T) {
+	s := newTestServer(t)
+	// No buildTask: server is unconfigured.
+	h := s.Handler()
+	r, w := postJSON(`/api/download`, `{"kind":"episode","id":"ep1","audio":["ja-JP"]}`)
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "etp_rt") {
+		t.Errorf("expected etp_rt in error, got: %s", w.Body.String())
+	}
+}
+
+func TestAPIJobs_FoundAndMissing(t *testing.T) {
+	s := newTestServer(t)
+	s.buildTask = func(string, DownloadOpts) jobs.Task {
+		return func(download.Progress) error { return nil }
+	}
+	job := s.manager.Enqueue("ep1", func(download.Progress) error { return nil })
+
+	h := s.Handler()
+	r, w := get("/api/jobs/"+job.ID)
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	got := w.Body.String()
+	if !strings.Contains(got, `"status"`) {
+		t.Errorf("job body missing status: %s", got)
+	}
+	if !strings.Contains(got, job.ID) {
+		t.Errorf("job body missing id: %s", got)
+	}
+
+	// Missing job -> 404.
+	r2, w2 := get("/api/jobs/nope")
+	h.ServeHTTP(w2, r2)
+	if w2.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for unknown job, got %d", w2.Code)
+	}
+}
+
+func TestAPI_CORSHeaders(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler()
+
+	// Extension-origin preflight under /api/ -> 204 with that origin reflected.
+	const extOrigin = "safari-web-extension://D1AB0C2E-4F2A-4B7E-9C01-FAKEGUID0001"
+	r, w := httptest.NewRequest(http.MethodOptions, "/api/download", nil), httptest.NewRecorder()
+	r.Header.Set("Origin", extOrigin)
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", w.Code)
+	}
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != extOrigin {
+		t.Errorf("expected ACAO to reflect the extension origin, got %q", got)
+	}
+	if got := w.Header().Get("Vary"); got != "Origin" {
+		t.Errorf("expected Vary: Origin, got %q", got)
+	}
+	if got := w.Header().Get("Access-Control-Allow-Methods"); got != "POST, OPTIONS, GET" {
+		t.Errorf("expected methods, got %q", got)
+	}
+	if got := w.Header().Get("Access-Control-Allow-Headers"); got != "Content-Type" {
+		t.Errorf("expected headers, got %q", got)
+	}
+	if got := w.Header().Get("Access-Control-Max-Age"); got != "86400" {
+		t.Errorf("expected max-age, got %q", got)
+	}
+
+	// A no-Origin request (curl / same-machine tool) is allowed and gets no
+	// ACAO header (none is needed — it is not a browser).
+	r2, w2 := httptest.NewRequest(http.MethodOptions, "/api/download", nil), httptest.NewRecorder()
+	h.ServeHTTP(w2, r2)
+	if w2.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 for no-origin preflight, got %d", w2.Code)
+	}
+	if got := w2.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("no-origin request should not get an ACAO header, got %q", got)
+	}
+
+	// A drive-by https page is blocked: the preflight gets no CORS headers, so
+	// the browser will refuse to read the eventual response.
+	r3, w3 := httptest.NewRequest(http.MethodOptions, "/api/download", nil), httptest.NewRecorder()
+	r3.Header.Set("Origin", "https://attacker.example")
+	h.ServeHTTP(w3, r3)
+	if w3.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 on blocked preflight, got %d", w3.Code)
+	}
+	if got := w3.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("blocked origin must not get ACAO, got %q", got)
+	}
+	// And an actual blocked request is refused with 403.
+	r4, w4 := postJSON(`/api/download`, `{"kind":"episode","id":"ep1","audio":["ja-JP"]}`)
+	r4.Header.Set("Origin", "https://attacker.example")
+	h.ServeHTTP(w4, r4)
+	if w4.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for disallowed actual request, got %d (body: %s)", w4.Code, w4.Body.String())
+	}
+	if got := w4.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("blocked actual request must not get ACAO, got %q", got)
+	}
+
+	// Path normalization: /api/../settings cleans to /settings, so CORS must
+	// NOT be applied (the mux would redirect this to the HTML /settings route).
+	r5, w5 := httptest.NewRequest(http.MethodOptions, "/api/../settings", nil), httptest.NewRecorder()
+	r5.Header.Set("Origin", extOrigin)
+	h.ServeHTTP(w5, r5)
+	if got := w5.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("path-traversal /api/../settings must not get CORS headers, got ACAO=%q", got)
+	}
+
+	// CORS must NOT leak onto HTML routes.
+	r6, w6 := get("/settings")
+	h.ServeHTTP(w6, r6)
+	if got := w6.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("CORS must be scoped to /api/*, but /settings got ACAO=%q", got)
+	}
+}

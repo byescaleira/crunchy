@@ -305,12 +305,18 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /jobs/list", s.handleJobsList)
 	mux.HandleFunc("GET /jobs/{id}/events", s.handleJobEvents)
 
+	// JSON API surface (W6) for the Safari extension. CORS is scoped to these
+	// routes only via s.apiMiddleware (HTML routes are untouched).
+	mux.HandleFunc("GET /api/health", s.handleAPIHealth)
+	mux.HandleFunc("POST /api/download", s.handleAPIDownload)
+	mux.HandleFunc("GET /api/jobs/{id}", s.handleAPIJob)
+
 	sub, err := fs.Sub(web.Static, "static")
 	if err != nil {
 		panic("embedded static subtree: " + err.Error())
 	}
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(sub)))
-	return mux
+	return s.apiMiddleware(mux)
 }
 
 // render writes a templ component as the response body.
