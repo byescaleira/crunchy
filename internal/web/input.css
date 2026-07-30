@@ -1,0 +1,11 @@
+/* Tailwind v4 CSS-first entry point. Compiled to static/app.css by the
+   Tailwind CLI (see package.json): npx @tailwindcss/cli -i input.css -o static/app.css.
+   The compiled app.css is committed and go:embedded so the binary ships with
+   styling and needs no Node at runtime. DaisyUI is a pure-CSS Tailwind plugin
+   (zero JS) so it layers semantic component classes on top of Tailwind without
+   competing with HTMX for control of the DOM. */
+@import "tailwindcss";
+@plugin "daisyui" {
+  /* Default dark theme for the control panel; the navbar offers a toggle. */
+  themes: dark --default, light --prefersdark;
+}

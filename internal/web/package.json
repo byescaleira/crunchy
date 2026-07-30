@@ -1,0 +1,14 @@
+{
+  "name": "crunchy-web-assets",
+  "private": true,
+  "description": "Build-only toolchain for the embedded web UI. The compiled static/app.css is committed and go:embedded; this package only regenerates it.",
+  "scripts": {
+    "build": "tailwindcss -i input.css -o static/app.css --minify",
+    "watch": "tailwindcss -i input.css -o static/app.css --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.1.0",
+    "tailwindcss": "^4.1.0",
+    "daisyui": "^5.0.0"
+  }
+}

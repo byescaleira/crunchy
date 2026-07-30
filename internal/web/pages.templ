@@ -1,0 +1,176 @@
+package web
+
+import (
+	"crunchyroll-downloader/internal/jobs"
+	"crunchyroll-downloader/internal/media"
+)
+
+// SettingsPage renders the etp-rt settings card. saved indicates a verified
+// token is on file; errText shows a token/transport error from the last save.
+templ SettingsPage(saved bool, errText string) {
+	@Layout("Settings", "settings") {
+		<div class="card bg-base-100 shadow border border-base-300">
+			<div class="card-body gap-4">
+				<h2 class="card-title">Settings</h2>
+				<p class="text-sm text-base-content/70">
+					Paste your <code>etp_rt</code> cookie. It stays on this machine
+					(127.0.0.1) and is never logged.
+				</p>
+				<form hx-post="/settings" hx-target="#settings-result" class="flex flex-col gap-3">
+					<label class="form-control">
+						<span class="label-text mb-1">etp_rt cookie</span>
+						<input
+							type="password"
+							name="etpRt"
+							class="input input-bordered w-full"
+							placeholder="etp_rt value"
+						/>
+					</label>
+					<button class="btn btn-primary self-start">Save &amp; test token</button>
+				</form>
+				<div id="settings-result">
+					if errText != "" {
+						@alert("error", errText)
+					} else if saved {
+						@alert("success", "Token saved and verified.")
+					}
+				</div>
+			</div>
+		</div>
+	}
+}
+
+// BrowsePage renders the browse panel: a series-URL form whose seasons partial
+// targets #seasons, and an #episodes panel that a season card fills via HTMX.
+templ BrowsePage(seasons []media.Season, seriesURL string, errText string) {
+	@Layout("Browse", "browse") {
+		<div class="grid gap-4 md:grid-cols-2">
+			<div class="card bg-base-100 shadow border border-base-300">
+				<div class="card-body gap-3">
+					<h2 class="card-title">Browse a series</h2>
+					<form hx-post="/browse" hx-target="#seasons" class="flex flex-col gap-3">
+						<input
+							type="text"
+							name="url"
+							class="input input-bordered w-full"
+							placeholder="https://www.crunchyroll.com/series/..."
+							value={ seriesURL }
+						/>
+						<button class="btn btn-primary self-start">List seasons</button>
+					</form>
+					<div id="seasons" class="flex flex-col gap-2">
+						@seasonsList(seasons, errText)
+					</div>
+				</div>
+			</div>
+			<div class="card bg-base-100 shadow border border-base-300">
+				<div class="card-body gap-2">
+					<h2 class="card-title">Episodes</h2>
+					<div id="episodes" class="flex flex-col gap-2">
+						<p class="text-sm text-base-content/50">Select a season to list its episodes.</p>
+					</div>
+				</div>
+			</div>
+		</div>
+	}
+}
+
+// seasonsList is the HTMX partial swapped into #seasons after a /browse POST.
+templ seasonsList(seasons []media.Season, errText string) {
+	if errText != "" {
+		@alert("error", errText)
+	}
+	if len(seasons) == 0 && errText == "" {
+		<p class="text-sm text-base-content/50">No seasons yet — paste a series URL above.</p>
+	}
+	for _, s := range seasons {
+		@seasonCard(s)
+	}
+}
+
+// EpisodesTable is the HTMX partial swapped into #episodes when a season is
+// selected. It contains the per-episode checkboxes and the quality/language
+// options that POST to /download.
+templ EpisodesTable(episodes []media.SeasonEpisode, errText string) {
+	if errText != "" {
+		@alert("error", errText)
+	}
+	if len(episodes) == 0 && errText == "" {
+		<p class="text-sm text-base-content/50">No episodes found.</p>
+	}
+	<form hx-post="/download" hx-target="#jobs" class="flex flex-col gap-3">
+		if len(episodes) > 0 {
+			<div class="overflow-x-auto">
+				<table class="table table-zebra">
+					<thead>
+						<tr><th></th><th>#</th><th>Title</th><th>Audio</th></tr>
+					</thead>
+					<tbody>
+						for _, ep := range episodes {
+							@episodeRow(ep)
+						}
+					</tbody>
+				</table>
+			</div>
+			<div class="flex flex-wrap gap-3">
+				<label class="form-control">
+					<span class="label-text mb-1">Video quality</span>
+					<select name="videoQuality" class="select select-bordered">
+						<option>1080p</option>
+						<option>720p</option>
+						<option>480p</option>
+						<option>360p</option>
+					</select>
+				</label>
+				<label class="form-control">
+					<span class="label-text mb-1">Audio quality</span>
+					<select name="audioQuality" class="select select-bordered">
+						<option>192k</option>
+						<option>128k</option>
+						<option>96k</option>
+					</select>
+				</label>
+			</div>
+			<label class="form-control">
+				<span class="label-text mb-1">Audio langs (comma-separated, or "all")</span>
+				<input type="text" name="audioLangs" class="input input-bordered w-full" value="ja-JP" placeholder="ja-JP,en-US"/>
+			</label>
+			<label class="form-control">
+				<span class="label-text mb-1">Subtitle langs (comma-separated, or "all")</span>
+				<input type="text" name="subsLangs" class="input input-bordered w-full" value="en-US" placeholder="en-US"/>
+			</label>
+			<label class="form-control">
+				<span class="label-text mb-1">Output directory</span>
+				<input type="text" name="outputDir" class="input input-bordered w-full" placeholder="."/>
+			</label>
+			<button class="btn btn-primary self-start">Download selected</button>
+		}
+	</form>
+}
+
+// JobsPage renders the jobs panel: a refresh button that re-pulls the jobs list
+// into #jobs-list, plus the current job cards.
+templ JobsPage(js []*jobs.Job) {
+	@Layout("Jobs", "jobs") {
+		<div class="flex flex-col gap-3">
+			<div class="flex items-center justify-between">
+				<h2 class="card-title">Jobs</h2>
+				<button class="btn btn-ghost btn-sm" hx-get="/jobs/list" hx-target="#jobs-list">Refresh</button>
+			</div>
+			<div id="jobs-list" class="flex flex-col gap-2">
+				@jobsList(js)
+			</div>
+		</div>
+	}
+}
+
+// jobsList is the HTMX partial swapped into #jobs-list by /jobs (GET) and the
+// refresh button.
+templ jobsList(js []*jobs.Job) {
+	if len(js) == 0 {
+		<p class="text-sm text-base-content/50">No jobs yet.</p>
+	}
+	for _, j := range js {
+		@jobCard(j)
+	}
+}

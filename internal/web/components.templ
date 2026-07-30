@@ -1,0 +1,83 @@
+package web
+
+import (
+	"crunchyroll-downloader/internal/jobs"
+	"crunchyroll-downloader/internal/media"
+)
+
+// alert renders a DaisyUI alert. kind is one of error/success/warning/info.
+templ alert(kind, msg string) {
+	<div class={ "alert " + alertClass(kind) }>
+		<span>{ msg }</span>
+	</div>
+}
+
+// seasonCard renders one season as a card with a button that loads its episodes
+// into the #episodes target via HTMX.
+templ seasonCard(s media.Season) {
+	<div class="card bg-base-100 shadow border border-base-300">
+		<div class="card-body flex-row items-center justify-between">
+			<h2 class="card-title">Season { s.SeasonNumber }</h2>
+			<button
+				class="btn btn-primary btn-sm"
+				hx-get={ "/season/" + s.ID + "/episodes" }
+				hx-target="#episodes"
+			>View episodes</button>
+		</div>
+	</div>
+}
+
+// episodeRow renders one episode as a selectable table row. The contentId value
+// is the episode GUID the /download handler enqueues.
+templ episodeRow(ep media.SeasonEpisode) {
+	<tr>
+		<td><input type="checkbox" class="checkbox checkbox-primary" name="contentIds" value={ ep.ID }/></td>
+		<td class="font-mono whitespace-nowrap">E{ ep.EpisodeNumber }</td>
+		<td>{ ep.Title }</td>
+		<td class="flex flex-wrap gap-1">
+			for _, l := range audioLocales(ep) {
+				<span class="badge badge-ghost badge-sm">{ l }</span>
+			}
+		</td>
+	</tr>
+}
+
+// statusBadge renders a job's status as a colored DaisyUI badge.
+templ statusBadge(s jobs.Status) {
+	<span class={ "badge " + statusBadgeClass(string(s)) }>{ string(s) }</span>
+}
+
+// progressBar renders a DaisyUI progress bar for a job from its last segment
+// (done, total) tick. Jobs that haven't reported segments show an indeterminate
+// bar.
+templ progressBar(j *jobs.Job) {
+	{{
+		done, total := j.Segment()
+		pct := 0
+		if total > 0 {
+			pct = done * 100 / total
+		}
+	}}
+	if total > 0 {
+		<progress class="progress progress-primary w-full" value={ pct } max="100"></progress>
+	} else {
+		<progress class="progress progress-primary w-full"></progress>
+	}
+}
+
+// jobCard renders one job: label, status badge, progress bar, and an error line
+// if it failed. The card's id lets the SSE handler target it for swaps.
+templ jobCard(j *jobs.Job) {
+	<div class="card bg-base-100 shadow border border-base-300" id={ "job-" + j.ID }>
+		<div class="card-body gap-2">
+			<div class="flex items-center justify-between gap-2">
+				<h3 class="card-title text-base truncate">{ j.Label }</h3>
+				@statusBadge(j.Status())
+			</div>
+			@progressBar(j)
+			if j.Status() == "error" {
+				<div class="text-xs text-error font-mono break-all">{ j.Error() }</div>
+			}
+		</div>
+	</div>
+}
