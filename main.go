@@ -97,7 +97,7 @@ func processUrl(url string) {
 			episodes := getSeasonEpisodes(seasonId, primaryAudio, primarySubs)
 			downloadSeason(videoQuality, audioQuality, audioLangs, subsLangs, episodes)
 		} else {
-			print("No season number specified, downloading all seasons...\n")
+			fmt.Print("No season number specified, downloading all seasons...\n")
 
 			for _, season := range seasons {
 				episodes := getSeasonEpisodes(season.ID, primaryAudio, primarySubs)

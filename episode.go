@@ -48,7 +48,7 @@ func getEpisode(id string) Episode {
 		panic(err)
 	}
 	if episode.Error != nil {
-		print("Error:", *episode.Error)
+		fmt.Println("Error:", *episode.Error)
 		os.Exit(1)
 	}
 

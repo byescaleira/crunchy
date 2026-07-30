@@ -41,7 +41,7 @@ func downloadPart(url string) ([]byte, error) {
 		req.Header.Set("Origin", "https://static.crunchyroll.com")
 		req.Header.Set("Referer", "https://static.crunchyroll.com/")
 		req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:147.0) Gecko/20100101 Firefox/147.0")
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := sharedClient.Do(req)
 		if err != nil {
 			if attempt < maxRetries-1 {
 				continue
@@ -255,7 +255,7 @@ func downloadSubs(url string) string {
 	req.Header.Set("Origin", "https://static.crunchyroll.com")
 	req.Header.Set("Referer", "https://static.crunchyroll.com/")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:147.0) Gecko/20100101 Firefox/147.0")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := sharedClient.Do(req)
 	if err != nil {
 		panic(err)
 	}
@@ -365,7 +365,7 @@ func downloadEpisode(baseContentId string, info EpisodeInfo, audioLangs, subsLan
 	// all if anything fails partway through.
 	activeStreams := map[string]string{}
 	defer func() {
-		print("Cleaning up...")
+		fmt.Print("Cleaning up...")
 
 		for id, sToken := range activeStreams {
 			deleteStream(id, sToken)
@@ -463,7 +463,7 @@ func downloadEpisode(baseContentId string, info EpisodeInfo, audioLangs, subsLan
 		}
 
 		if success := deleteStream(version.contentId, episode.Token); !success {
-			print("Failed to remove the player stream, you will probably have issues downloading other episodes.\n")
+			fmt.Print("Failed to remove the player stream, you will probably have issues downloading other episodes.\n")
 		}
 		delete(activeStreams, version.contentId)
 	}
