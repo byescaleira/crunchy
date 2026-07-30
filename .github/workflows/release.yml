@@ -10,6 +10,15 @@ name: Build and Attach Release Artifacts
 on:
   release:
     types: [published]
+  # Manual fallback: the `release: published` event is occasionally dropped on
+  # repos with no prior Actions activity (GitHub's first-run gate). Dispatch by
+  # hand with the tag to (re)build + attach the assets.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and attach assets to (e.g. 2.2.0)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -68,5 +77,8 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name }}
+          # workflow_dispatch passes the tag in inputs.tag; the release event
+          # carries it on github.event.release.tag_name. The || falls back so the
+          # same step works under either trigger.
+          TAG: ${{ github.event.inputs.tag || github.event.release.tag_name }}
         run: gh release upload "$TAG" "$ASSET" --clobber
