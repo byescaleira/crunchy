@@ -29,7 +29,7 @@ func (c *Client) GetAccessToken() (string, error) {
 	}
 	req.Header.Set("Authorization", "Basic bm9haWhkZXZtXzZpeWcwYThsMHE6")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("User-Agent", UserAgent)
 	req.AddCookie(&http.Cookie{Name: "device_id", Value: c.DeviceID})
 	req.AddCookie(&http.Cookie{Name: "etp_rt", Value: c.EtpRt})
 

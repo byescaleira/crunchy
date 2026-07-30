@@ -113,7 +113,7 @@ func main() {
 	subsLangs := parseLangs(*subtitlesLang)
 
 	d := &download.Downloader{
-		Client:       client,
+		API:          client,
 		VideoQuality: *videoQuality,
 		AudioQuality: *audioQuality,
 		AudioLangs:   audioLangs,

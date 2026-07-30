@@ -13,13 +13,13 @@ import (
 	"github.com/google/uuid"
 )
 
-// userAgent is the Firefox UA presented to every Crunchyroll endpoint. It was
+// UserAgent is the Firefox UA presented to every Crunchyroll endpoint. It was
 // duplicated across ~9 call sites before this consolidation.
-const userAgent = "Mozilla/5.0 (X11; Linux x86_64; rv:147.0) Gecko/20100101 Firefox/147.0"
+const UserAgent = "Mozilla/5.0 (X11; Linux x86_64; rv:147.0) Gecko/20100101 Firefox/147.0"
 
-// sharedClient is the single *http.Client used as the default Doer. Reusing one
+// SharedClient is the single *http.Client used as the default Doer. Reusing one
 // client keeps connection pooling; creating one per call defeated keep-alive.
-var sharedClient = &http.Client{}
+var SharedClient = &http.Client{}
 
 // Doer is the HTTP seam: anything that can execute an *http.Request. The real
 // implementation is *http.Client (sharedClient); tests substitute a fake that
@@ -43,7 +43,7 @@ type Client struct {
 // of panicking, so callers can report it cleanly).
 func NewClient(etpRt string, debug bool) (*Client, error) {
 	c := &Client{
-		Doer:     sharedClient,
+		Doer:     SharedClient,
 		EtpRt:    etpRt,
 		DeviceID: uuid.NewString(),
 		Debug:    debug,
@@ -92,7 +92,7 @@ func (c *Client) CrunchyRequest(method, url string, body io.Reader, auth bool) (
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("User-Agent", UserAgent)
 	if auth {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
 	}

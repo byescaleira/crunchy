@@ -1,9 +1,9 @@
 // Package download orchestrates fetching, decrypting and assembling an
 // episode: downloading media segments in parallel, decrypting them one at a
 // time straight to temp files (to keep memory bounded), downloading subtitles,
-// and driving the mux step. A Downloader bundles a crunchy.Client with the
-// user's quality/language selections so the CLI and the server share one code
-// path.
+// and driving the mux step. A Downloader bundles the Crunchyroll API client
+// with the user's quality/language selections so the CLI and the server share
+// one code path.
 package download
 
 import (
@@ -31,17 +31,64 @@ import (
 	"crunchyroll-downloader/internal/output"
 )
 
-const maxWorkers = 10
+// API is the slice of the Crunchyroll client that Episode/Season need. The
+// concrete *crunchy.Client satisfies it; tests substitute a fake to exercise
+// the orchestration without network, Widevine, or ffmpeg.
+type API interface {
+	GetEpisode(id string) media.Episode
+	GetEpisodeInfo(id string) media.EpisodeInfo
+	GetSeasons(contentId, audioLocale, subLocale string) []media.Season
+	GetSeasonEpisodes(contentId, audioLocale, subLocale string) []media.SeasonEpisode
+	DeleteStream(contentId, sToken string) bool
+	ParseManifest(url string) *mpd.MPD
+	GetLicense(psshData, contentId, videoToken string) ([]*widevine.Key, error)
+}
 
-// Downloader bundles an authenticated crunchy.Client with the user's quality
-// and language selections. Its Episode/Season methods drive a download.
+// Downloader bundles the Crunchyroll API client with the user's quality and
+// language selections. Its Episode/Season methods drive a download.
 type Downloader struct {
-	Client       *crunchy.Client
+	API          API
+	HTTP         crunchy.Doer // raw HTTP for CDN segment/subtitle fetches
 	VideoQuality string
 	AudioQuality string
 	AudioLangs   []string
 	SubsLangs    []string
+	MaxWorkers   int
 	Debug        bool
+
+	// The I/O steps are overridable func fields so the orchestration (the
+	// keys-ordering invariant, the per-track sequence) can be tested without
+	// network, Widevine, or ffmpeg. They default to the real implementations
+	// the first time a download runs (see ensureSeams).
+	downloadTrack     func(baseUrl, representationId *string, set *mpd.AdaptationSet, keys []*widevine.Key) (string, error)
+	downloadSubtitles func(url string) string
+	merge             func(videoFile string, audioTracks, subTracks []mux.MediaTrack, outputFile string, info media.EpisodeInfo)
+}
+
+// workers returns the configured segment-download parallelism, defaulting to 10
+// (the former package-level const) when unset.
+func (d *Downloader) workers() int {
+	if d.MaxWorkers > 0 {
+		return d.MaxWorkers
+	}
+	return 10
+}
+
+// ensureSeams fills in the default I/O implementations and HTTP client. It is
+// idempotent so callers (and tests) only override the seams they care about.
+func (d *Downloader) ensureSeams() {
+	if d.HTTP == nil {
+		d.HTTP = crunchy.SharedClient
+	}
+	if d.downloadTrack == nil {
+		d.downloadTrack = d.downloadParts
+	}
+	if d.downloadSubtitles == nil {
+		d.downloadSubtitles = func(url string) string { return downloadSubs(d.HTTP, url) }
+	}
+	if d.merge == nil {
+		d.merge = mux.Merge
+	}
 }
 
 func buildUrl(base, representationId, file string, partNum *int64) string {
@@ -52,20 +99,21 @@ func buildUrl(base, representationId, file string, partNum *int64) string {
 	return base + strings.ReplaceAll(file, "$RepresentationID$", representationId)
 }
 
-func downloadPart(c *crunchy.Client, url string) ([]byte, error) {
+func downloadPart(doer crunchy.Doer, url string) ([]byte, error) {
 	maxRetries := 5
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
 			time.Sleep(time.Duration(attempt) * 2 * time.Second)
 		}
 
-		req, err := c.CrunchyRequest(http.MethodGet, url, nil, false)
+		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
 			return nil, err
 		}
+		req.Header.Set("User-Agent", crunchy.UserAgent)
 		req.Header.Set("Origin", "https://static.crunchyroll.com")
 		req.Header.Set("Referer", "https://static.crunchyroll.com/")
-		resp, err := c.Doer.Do(req)
+		resp, err := doer.Do(req)
 		if err != nil {
 			if attempt < maxRetries-1 {
 				continue
@@ -121,9 +169,13 @@ type segmentJob struct {
 	url   string
 }
 
-func downloadParts(c *crunchy.Client, baseUrl, representationId *string, set *mpd.AdaptationSet, keys []*widevine.Key) (string, error) {
+// downloadParts fetches the init segment and every media segment for one
+// adaptation set (in parallel), then decrypts them one at a time straight into
+// a temp output file using keys. Segments are streamed through per-segment temp
+// files so a heavy episode never keeps the whole file in RAM.
+func (d *Downloader) downloadParts(baseUrl, representationId *string, set *mpd.AdaptationSet, keys []*widevine.Key) (string, error) {
 	initUrl := buildUrl(*baseUrl, *representationId, *set.SegmentTemplate.Initialization, nil)
-	initData, err := downloadPart(c, initUrl)
+	initData, err := downloadPart(d.HTTP, initUrl)
 	if err != nil {
 		return "", err
 	}
@@ -142,12 +194,12 @@ func downloadParts(c *crunchy.Client, baseUrl, representationId *string, set *mp
 	jobs := make(chan segmentJob, total)
 	var wg sync.WaitGroup
 
-	for w := 0; w < maxWorkers; w++ {
+	for w := 0; w < d.workers(); w++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for job := range jobs {
-				data, err := downloadPart(c, job.url)
+				data, err := downloadPart(d.HTTP, job.url)
 				if err != nil {
 					errOnce.Do(func() { downloadErr = err })
 					return
@@ -271,14 +323,15 @@ func decryptSegmentsToFile(initData []byte, segFiles []string, outputFile string
 	return nil
 }
 
-func downloadSubs(c *crunchy.Client, url string) string {
-	req, err := c.CrunchyRequest(http.MethodGet, url, nil, false)
+func downloadSubs(doer crunchy.Doer, url string) string {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		panic(err)
 	}
+	req.Header.Set("User-Agent", crunchy.UserAgent)
 	req.Header.Set("Origin", "https://static.crunchyroll.com")
 	req.Header.Set("Referer", "https://static.crunchyroll.com/")
-	resp, err := c.Doer.Do(req)
+	resp, err := doer.Do(req)
 	if err != nil {
 		panic(err)
 	}
@@ -304,7 +357,15 @@ func downloadSubs(c *crunchy.Client, url string) string {
 // audio dub, and the video track, into a single MKV named after the series and
 // episode. It mutates copies of the language selections (so "all" expands per
 // episode), leaving the Downloader's fields untouched for the next episode.
+//
+// The Widevine keys-ordering invariant is enforced structurally here: each
+// version's keys are loop-local (versionKeys), and the audio for version i is
+// downloaded (and thus decrypted) synchronously before the loop advances to
+// version i+1's GetLicense. The video track is downloaded once with version 0's
+// keys.
 func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) {
+	d.ensureSeams()
+
 	cleanSeriesTitle := output.Sanitize(info.EpisodeMetadata.SeriesTitle)
 	cleanEpisodeTitle := output.Sanitize(info.Title)
 
@@ -383,7 +444,7 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) {
 		fmt.Print("Cleaning up...")
 
 		for id, sToken := range activeStreams {
-			d.Client.DeleteStream(id, sToken)
+			d.API.DeleteStream(id, sToken)
 		}
 		if r := recover(); r != nil {
 			fmt.Printf("Recovered from error: %v\n", r)
@@ -392,7 +453,7 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) {
 
 	// Fetch the first version's playback first so we can validate subtitle
 	// availability before downloading anything heavy.
-	firstEpisode := d.Client.GetEpisode(versions[0].contentId)
+	firstEpisode := d.API.GetEpisode(versions[0].contentId)
 	activeStreams[versions[0].contentId] = firstEpisode.Token
 
 	if len(subsLangs) == 1 && subsLangs[0] == "all" {
@@ -417,7 +478,7 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) {
 	var subTracks []mux.MediaTrack
 	for _, locale := range subsLangs {
 		fmt.Printf("Downloading subtitles for %s...\n", output.TrackTitle(locale))
-		subTracks = append(subTracks, mux.MediaTrack{File: downloadSubs(d.Client, firstEpisode.Subtitles[locale].URL), Locale: locale})
+		subTracks = append(subTracks, mux.MediaTrack{File: d.downloadSubtitles(firstEpisode.Subtitles[locale].URL), Locale: locale})
 	}
 	if len(subTracks) > 0 {
 		fmt.Println("Downloaded subtitles!")
@@ -429,18 +490,18 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) {
 	for i, version := range versions {
 		episode := firstEpisode
 		if i > 0 {
-			episode = d.Client.GetEpisode(version.contentId)
+			episode = d.API.GetEpisode(version.contentId)
 			activeStreams[version.contentId] = episode.Token
 		}
 
-		manifestData := d.Client.ParseManifest(episode.ManifestURL)
+		manifestData := d.API.ParseManifest(episode.ManifestURL)
 		pssh := manifest.GetPSSH(manifestData)
 		if pssh == nil {
 			panic("PSSH not found")
 		}
 		// GetLicense returns this version's keys; audio for this version must be
 		// downloaded before the next license so the keys still match.
-		versionKeys, err := d.Client.GetLicense(*pssh, version.contentId, episode.Token)
+		versionKeys, err := d.API.GetLicense(*pssh, version.contentId, episode.Token)
 		if err != nil {
 			panic(fmt.Sprintf("getLicense for %s: %s", version.locale, err))
 		}
@@ -454,7 +515,7 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) {
 		if audioBaseUrl == nil {
 			panic(fmt.Sprintf("failed to get the audio base URL for %s, maybe the audio quality you entered is wrong?", version.locale))
 		}
-		audioFile, err := downloadParts(d.Client, audioBaseUrl, audioRepresentationId, audioSet, versionKeys)
+		audioFile, err := d.downloadTrack(audioBaseUrl, audioRepresentationId, audioSet, versionKeys)
 		if err != nil {
 			panic(err)
 		}
@@ -472,19 +533,19 @@ func (d *Downloader) Episode(baseContentId string, info media.EpisodeInfo) {
 			if baseUrl == nil {
 				panic("failed to get the video base URL, maybe the video quality you entered is wrong?")
 			}
-			videoFile, err = downloadParts(d.Client, baseUrl, representationId, videoSet, versionKeys)
+			videoFile, err = d.downloadTrack(baseUrl, representationId, videoSet, versionKeys)
 			if err != nil {
 				panic(err)
 			}
 		}
 
-		if success := d.Client.DeleteStream(version.contentId, episode.Token); !success {
+		if success := d.API.DeleteStream(version.contentId, episode.Token); !success {
 			fmt.Print("Failed to remove the player stream, you will probably have issues downloading other episodes.\n")
 		}
 		delete(activeStreams, version.contentId)
 	}
 
-	mux.Merge(videoFile, audioTracks, subTracks, outputFile, info)
+	d.merge(videoFile, audioTracks, subTracks, outputFile, info)
 }
 
 // Season downloads every episode in a season list, building each episode's
