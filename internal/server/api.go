@@ -4,11 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"path"
 	"strings"
+
+	"crunchyroll-downloader/internal/logging"
 )
 
 // Version is the server build version. It can be overridden at build time via
@@ -177,11 +178,13 @@ func (s *Server) handleAPIDownload(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, errNotConfigured) {
 			msg = err.Error()
 		} else {
-			log.Printf("api download enqueue %s %s: %v", kind, id, err)
+			s.log.Error("api", "enqueue failed",
+				logging.F("kind", kind), logging.F("id", id), logging.F("err", err))
 		}
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": msg})
 		return
 	}
+	s.log.Info("api", "enqueue", logging.F("kind", kind), logging.F("id", id), logging.F("jobs", len(jobs)))
 	// Remember the user's choices so the modal pre-fills them next time
 	// (shared helper with the web form).
 	s.persistLastOpts(opts)

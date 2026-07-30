@@ -266,6 +266,22 @@ type Manager struct {
 
 	subsMu sync.Mutex
 	subs   map[chan EnvelopeEvent]struct{}
+	// tap, when set via SetTap, receives every EnvelopeEvent the Manager
+	// broadcasts — a side channel for server-side structured logging that does
+	// not depend on the SSE subscribers. It is read and called outside the
+	// subsMu lock so a slow writer can't stall the subscriber fan-out.
+	tap func(EnvelopeEvent)
+}
+
+// SetTap installs a function called for every event the Manager broadcasts
+// (every job's status/phase/segment/message/done/error/removed). Pass nil to
+// detach. The server uses it to drive structured download logs; the package
+// stays free of any formatting concern by handing the raw EnvelopeEvent to
+// the callback.
+func (m *Manager) SetTap(f func(EnvelopeEvent)) {
+	m.subsMu.Lock()
+	m.tap = f
+	m.subsMu.Unlock()
 }
 
 // NewManager creates a Manager that runs up to maxConcurrent jobs at once. A
@@ -410,12 +426,19 @@ func (m *Manager) unsubscribe(ch chan EnvelopeEvent) {
 // on reconnect).
 func (m *Manager) broadcast(ev EnvelopeEvent) {
 	m.subsMu.Lock()
-	defer m.subsMu.Unlock()
+	tap := m.tap
 	for ch := range m.subs {
 		select {
 		case ch <- ev:
 		default:
 		}
+	}
+	m.subsMu.Unlock()
+	// Fire the tap outside subsMu: the server's handler does I/O (writes a
+	// structured line) and may look the job up under m.mu, neither of which
+	// should block subscriber delivery.
+	if tap != nil {
+		tap(ev)
 	}
 }
 

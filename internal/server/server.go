@@ -12,11 +12,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +25,7 @@ import (
 	"crunchyroll-downloader/internal/crunchy"
 	"crunchyroll-downloader/internal/download"
 	"crunchyroll-downloader/internal/jobs"
+	"crunchyroll-downloader/internal/logging"
 	"crunchyroll-downloader/internal/media"
 	"crunchyroll-downloader/internal/web"
 )
@@ -82,6 +83,7 @@ type config struct {
 // via the accessor under mu; configure writes them.
 type Server struct {
 	manager *jobs.Manager
+	log     *logging.Logger
 	dataDir string
 	cfgPath string
 	debug   bool
@@ -95,6 +97,13 @@ type Server struct {
 	cfg              config // single source of truth for persisted prefs (mu-guarded)
 	restartOpts      map[string]DownloadOpts // opts to re-enqueue a job by id (mu-guarded); restart is per-episode
 	doneGrace        time.Duration           // how long a done job lingers before auto-removal (watchJob)
+
+	// logState carries the per-job bookkeeping the structured logger needs to
+	// add duration to the completion line and throttle the per-segment progress
+	// lines. Guarded by logStateMu.
+	logStateMu sync.Mutex
+	logStarts  map[string]time.Time // job id → wall-clock when it left queued/downloading started
+	logSeg     map[string]int       // job id → last logged 5% progress bucket
 }
 
 // New creates a Server rooted at dataDir. If etpRt is empty it tries to load it
@@ -111,6 +120,9 @@ func New(dataDir, etpRt string, debug bool) (*Server, error) {
 		debug:       debug,
 		restartOpts: map[string]DownloadOpts{},
 		doneGrace:   defaultDoneGrace,
+		log:         logging.New(os.Stderr),
+		logStarts:    map[string]time.Time{},
+		logSeg:       map[string]int{},
 	}
 
 	// Always load the saved config so the last-used download prefs (and the
@@ -122,6 +134,10 @@ func New(dataDir, etpRt string, debug bool) (*Server, error) {
 		saved.MaxConcurrent = 3
 	}
 	s.manager = jobs.NewManager(saved.MaxConcurrent)
+	// Tap every job event into a structured line so the user can follow the
+	// full download lifecycle server-side (queued → phase → progress → done),
+	// not just the final status. The handler does its own throttling.
+	s.manager.SetTap(s.handleJobEvent)
 	s.mu.Lock()
 	s.cfg = saved
 	s.outputDir = saved.OutputDir
@@ -204,7 +220,7 @@ func (s *Server) persistLastOpts(opts DownloadOpts) {
 	cfg := s.cfg
 	s.mu.Unlock()
 	if err := s.saveConfig(cfg); err != nil {
-		log.Printf("persist last download opts: %v", err)
+		s.log.Warn("server", "persist last download opts failed", logging.F("err", err))
 	}
 }
 
@@ -521,8 +537,25 @@ func (s *Server) Handler() http.Handler {
 	if err != nil {
 		panic("embedded static subtree: " + err.Error())
 	}
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(sub)))
+	mux.Handle("GET /static/", http.StripPrefix("/static/", staticFileServer(http.FileServerFS(sub))))
 	return s.apiMiddleware(mux)
+}
+
+// staticFileServer wraps the embedded static file server so files whose
+// extension Go's built-in MIME table doesn't know (notably .webmanifest, which
+// would otherwise be sniffed to text/plain) are sent with the correct
+// Content-Type. http.ServeContent honors a pre-set Content-Type and skips
+// sniffing, so setting it before delegating is enough.
+func staticFileServer(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, ".webmanifest"):
+			w.Header().Set("Content-Type", "application/manifest+json; charset=utf-8")
+		case strings.HasSuffix(r.URL.Path, ".ico"):
+			w.Header().Set("Content-Type", "image/x-icon")
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 // render writes a templ component as the response body.
