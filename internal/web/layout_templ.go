@@ -116,10 +116,9 @@ func DownloadModalShell() templ.Component {
 // navbar is the floating liquid-glass capsule Apple uses for its top tab bar: a
 // centered rounded-full glass pill that floats with a margin from the top/sides
 // (not a full-width bar), a faint full border, and a soft drop shadow. The brand
-// mark + wordmark sit left, the search field fills the middle, and the section
-// pills sit right. The search is a plain GET form to /browse — a single text
-// input submits on Enter with no button, so there is no Search button to tap.
-// Dark-only — no theme toggle.
+// mark + section pills sit on the left, the search field sits on the right. The
+// search is a plain GET form to /browse — a single text input submits on Enter
+// with no button, so there is no Search button to tap. Dark-only — no theme toggle.
 func navbar(active string) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
@@ -149,15 +148,7 @@ func navbar(active string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "<span class=\"font-semibold tracking-tight text-sm text-white/90 hidden md:inline\">Crunchy Downloader</span></a><form action=\"/browse\" method=\"get\" class=\"relative flex-1 min-w-0 max-w-md\">")
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		templ_7745c5c3_Err = iconSearch("h-4 w-4 text-white/40 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none").Render(ctx, templ_7745c5c3_Buffer)
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "<input type=\"text\" name=\"q\" class=\"input input-bordered rounded-full w-full h-9 pl-10 pr-3 bg-base-200/60 border-white/10 text-sm\" placeholder=\"Search by title or paste a series URL\" autocomplete=\"off\"></form><div class=\"flex items-center gap-1 shrink-0\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "<span class=\"font-semibold tracking-tight text-sm text-white/90 hidden md:inline\">Crunchy Downloader</span></a><div class=\"flex items-center gap-1 shrink-0\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -173,7 +164,15 @@ func navbar(active string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "</div></nav></div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "</div><form action=\"/browse\" method=\"get\" class=\"relative ml-auto w-full max-w-sm min-w-0\">")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = iconSearch("h-4 w-4 text-white/40 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none").Render(ctx, templ_7745c5c3_Buffer)
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "<input type=\"text\" name=\"q\" class=\"input input-bordered rounded-full w-full h-9 pl-10 pr-3 bg-base-200/60 border-white/10 text-sm\" placeholder=\"Search by title or paste a series URL\" autocomplete=\"off\"></form></nav></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -212,7 +211,7 @@ func navLink(label, href string, active bool) templ.Component {
 			var templ_7745c5c3_Var6 templ.SafeURL
 			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinURLErrs(href)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `layout.templ`, Line: 273, Col: 129}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `layout.templ`, Line: 272, Col: 129}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 			if templ_7745c5c3_Err != nil {
@@ -225,7 +224,7 @@ func navLink(label, href string, active bool) templ.Component {
 			var templ_7745c5c3_Var7 string
 			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(label)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `layout.templ`, Line: 273, Col: 139}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `layout.templ`, Line: 272, Col: 139}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 			if templ_7745c5c3_Err != nil {
@@ -243,7 +242,7 @@ func navLink(label, href string, active bool) templ.Component {
 			var templ_7745c5c3_Var8 templ.SafeURL
 			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinURLErrs(href)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `layout.templ`, Line: 275, Col: 136}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `layout.templ`, Line: 274, Col: 136}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 			if templ_7745c5c3_Err != nil {
@@ -256,7 +255,7 @@ func navLink(label, href string, active bool) templ.Component {
 			var templ_7745c5c3_Var9 string
 			templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(label)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `layout.templ`, Line: 275, Col: 146}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `layout.templ`, Line: 274, Col: 146}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 			if templ_7745c5c3_Err != nil {
