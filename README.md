@@ -7,6 +7,8 @@ metadata, cover art, and live progress — either from a browser UI or the CLI.
 Single Go binaries, no runtime dependencies (besides FFmpeg). The web UI is
 embedded in the server binary; nothing is served from disk.
 
+![Crunchy Downloader web panel](.github/screenshots/web-panel.png)
+
 > This project is a fork of
 > [CuteTenshii/crunchyroll-downloader](https://github.com/CuteTenshii/crunchyroll-downloader).
 > Credit for the Crunchyroll client and Widevine decryption machinery goes to
